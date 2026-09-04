@@ -16,7 +16,7 @@ python -m venv .venv
 .venv/Scripts/python.exe -m pip install -r requirements.txt   # Windows
 # .venv/bin/python -m pip install -r requirements.txt         # Linux/macOS
 
-.venv/Scripts/python.exe -m pytest -q                          # 427 tests, ~4s, CPU only
+.venv/Scripts/python.exe -m pytest -q                          # 438 tests, ~7s, CPU only
 ```
 
 The service runs on Docling, which is the production document-processing path
@@ -464,8 +464,8 @@ run: 2,758 documents is roughly 28 hours single-threaded, which is why the
 cache exists and why the corpus is meant to be parsed once offline.
 
 > These are the **Phase 2 baseline** numbers, frozen at
-> `baselines/PHASE_2_BASELINE/`. Later phases are recorded in
-> [`PHASES.md`](PHASES.md) and never rewrite this table.
+> `baselines/PHASE_2_BASELINE/`. A later phase adds a section below it; it
+> never rewrites this table.
 >
 > `textonly` was the control this comparison needed and is no longer a backend
 > the service offers. Its implementation was moved to
@@ -495,13 +495,98 @@ table just as often as in a caption. Widening it is the highest-value change
 available to this service, and this harness is how the fix gets proved rather
 than asserted.
 
-**This was acted on in Phase 2.1** — see [`PHASES.md`](PHASES.md) for the
-intervention and its measured before/after, and
-[`TESTING_SCALE.md`](TESTING_SCALE.md) for how to verify it by hand.
-Magnitude is now resolved from four sources in precedence order by
-`app/processing/scale.py`.
+Before widening the detector, `scripts/inspect_scale_misses.py` asked the
+corpus where the evidence actually sat, mining the Phase 2 cache for the
+declared-magnitude questions the caption-only rule got wrong:
 
-The other 12% of docling's misses are `table_found_cell_missed` (71.5%) and
+| Where the magnitude phrase was available | Cases |
+|---|---:|
+| header cell / flattened column header | ~150 |
+| row-label stem (column zero) | ~108 |
+| a block above the table | ~72 |
+| **nowhere in the parse at all** | **87** |
+
+Docling leaves `caption` empty on nearly every table in this corpus. The
+detector was looking in the one place the words were not.
+
+### Phase 2.1 — financial scale recovery
+
+`app/processing/scale.py` resolves magnitude from four sources in precedence
+order — **caption > header > row stem > preceding text** — recording the
+winning source as provenance.
+
+A magnitude word alone is not a declaration. Two anchored patterns are
+recognised, `in <magnitude>` and `<currency> <magnitude>`, and both reject a
+magnitude immediately preceded by a number — which is what separates the
+declaration `(in millions)` from the figure `$5 million`. Preceding prose is
+held to a stricter rule still: parenthesised, or carrying a declarative
+lead-in, so "The following amounts are in thousands." is admitted while "we
+operate in millions of households" is not. A conflict between *different*
+sources is settled by precedence, deterministically; a conflict *inside* the
+winning source is the case no rule can settle, so it is flagged `ambiguous`
+and logged with every candidate rather than silently decided.
+
+Same 274 documents, same 1,644 questions, same 2,804 gold facts, same matching
+rules and metric definitions. The processor is the only changed variable:
+
+| Metric | Phase 2 | Phase 2.1 | Δ |
+|---|---:|---:|---:|
+| **scale accuracy (gold declares one)** | **37.2%** | **78.9%** | **+41.7 pts** |
+| scale accuracy (all scorable) | 51.8% | 74.3% | +22.5 pts |
+| question support | 85.3% | 85.3% | 0 |
+| fact recall | 88.0% | 88.0% | 0 |
+| facts found in tables | 81.1% | 81.1% | 0 |
+| tables / cells / cells parsed | 573 / 16,699 / 9,193 | 573 / 16,699 / 9,193 | 0 |
+| seconds per document | 37.4 | 34.4 | −3.0 |
+
+**223 of the 336 previously wrong magnitude questions recovered. Regressions: 0.**
+
+The flat rows are the point, not an omission. Scale sets
+`NumericValue.scaled` and never `num`, and fact matching compares `num` — so a
+correct intervention *must* leave recall, support, and structure untouched.
+All 2,804 fact records compare byte-identical between the two runs,
+identifiers included.
+
+`scripts/analyze_scale.py` classifies every remaining decision and diffs two
+runs question by question:
+
+```bash
+python scripts/analyze_scale.py \
+    --before baselines/PHASE_2_BASELINE/dev-docling.jsonl \
+    --after  runs/dev21-docling.jsonl --examples 12
+```
+
+What is left is mostly a ceiling rather than a bug. On 87 of the
+declared-magnitude questions no magnitude word exists anywhere in Docling's
+parse — headers read `2019`/`2018`, the block above reads `Table of Contents`,
+and the phrase the reader saw on the page is simply not in the extraction.
+448 of 535 (83.7%) is the most any detector reading this parse can reach.
+The strict false-positive signal — both sides declare a magnitude and they
+differ — fell from 47 cases to 1, and that one is arguably not an error:
+`microsoft-corporation_2019` prints `(In millions, except percentages and per
+share amounts)`, which is what the detector read; gold says `billion` because
+the *answer* is in billions.
+
+Two limits worth stating. A table gets a single scale, so
+`(In thousands, except per share amounts)` is read as thousands and the
+per-share columns are not exempted — percentages are already safe, because
+`parse_value` never scales them. And provenance is re-derived at analysis
+time rather than stored: `ProcessedDocument` v1.0 carries `TableUnits.scale`,
+`scale_label`, and `currency`, but not which source won. Every input the
+detector reads is already a contract field, so `analyze_scale.py` reproduces
+the decision exactly from a cached document. Carrying provenance at serving
+time would be an additive `TableUnits` field and a conscious contract
+decision, not a silent one.
+
+`cache_variant` includes `PROCESSING_VERSION` for this reason: what the cache
+stores is the *assembled* document, not the backend's raw parse, so a change
+to scale detection produces a different document from identical bytes and
+identical models. Without the version in the key, measuring this change would
+have silently scored the old build. Phase 2 entries live under `-p1` and
+remain on disk; Phase 2.1 writes `-p2`.
+
+Scale is where docling's headline weakness was. The other 12% of its misses
+have nothing to do with magnitude: `table_found_cell_missed` (71.5%) and
 prose wording differences (28.5%).
 
 ### What is being scored, and against what
