@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ledger-doc-contract"
+version = "1.0.0"
+description = "Structured-document contract emitted by LEDGER doc-processor-api"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.9"]
+
+[tool.setuptools.packages.find]
+include = ["ledger_doc_contract*"]

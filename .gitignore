@@ -1,0 +1,84 @@
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editors and local workspace settings
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual environments and local Python tooling
+.venv/
+venv/
+env/
+ENV/
+.python-version
+pip-wheel-metadata/
+
+# Packaging and build artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+MANIFEST
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Application runtime files
+*.pid
+*.log
+logs/
+tmp/
+temp/
+uploads/
+outputs/
+*.sqlite
+*.sqlite3
+
+# Docling, ML, and model caches
+.cache/
+.models/
+models/
+hf_cache/
+torch_cache/
+transformers_cache/
+
+# Downloaded source documents and generated one-off outputs
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.webp
+sample_report.pdf
+out.json
+doc_processor_output.json
+
+# Local datasets can be large; keep the dataset manifest versioned.
+data/*
+!data/tatdqa/
+data/tatdqa/*
+!data/tatdqa/manifest.json
+
+# Generated evaluation and experiment outputs
+runs/*
+evaluation/reports/

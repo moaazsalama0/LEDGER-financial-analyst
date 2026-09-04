@@ -1,0 +1,85 @@
+{
+  "meta": {
+    "backend": "textonly",
+    "backend_version": "pypdfium2 5.13.0 / pdfium 153.0.7999.0",
+    "model_versions": {},
+    "split": "dev",
+    "seed": 0,
+    "limit": null,
+    "documents": 274,
+    "force_ocr": false,
+    "gold_sha256": "",
+    "schema_version": 1,
+    "started_at": "2026-09-04T01:36:51+00:00"
+  },
+  "documents": {
+    "total": 274,
+    "ok": 274,
+    "failed": 0,
+    "from_cache": 7
+  },
+  "quality": {
+    "fact_recall": 21.93,
+    "question_support": 19.71,
+    "unique_match_rate": 80.0,
+    "table_fact_share": 0.0,
+    "scale_accuracy": null,
+    "scale_scorable": 0,
+    "facts": 2804,
+    "facts_found": 615,
+    "questions": 1644,
+    "questions_supported": 324
+  },
+  "by_answer_type": {
+    "span": {
+      "questions": 690,
+      "question_support": 21.59,
+      "fact_recall": 21.59
+    },
+    "multi-span": {
+      "questions": 216,
+      "question_support": 22.22,
+      "fact_recall": 25.57
+    },
+    "arithmetic": {
+      "questions": 706,
+      "question_support": 16.86,
+      "fact_recall": 21.13
+    },
+    "count": {
+      "questions": 32,
+      "question_support": 25.0,
+      "fact_recall": 16.25
+    }
+  },
+  "outcomes": {
+    "not_found": 2187,
+    "block_text": 84,
+    "block_text_value": 531,
+    "furniture_only": 2
+  },
+  "scale_verdicts": {
+    "unscorable": 1644
+  },
+  "structure": {
+    "pages": 307,
+    "blocks": 7746,
+    "furniture": 1090,
+    "sections": 48,
+    "tables": 0,
+    "cells": 0,
+    "parsed_nums": 0,
+    "scaled_tables": 0,
+    "extraction_sources": {
+      "text_layer": 307
+    },
+    "warnings": {
+      "NO_HEADINGS_DETECTED": 257
+    }
+  },
+  "performance": {
+    "seconds_per_document": 0.233,
+    "seconds_per_page": 0.203
+  },
+  "failures": []
+}
