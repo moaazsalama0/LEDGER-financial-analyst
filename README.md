@@ -24,8 +24,21 @@ and the only backend it serves. Install the weights, then start it:
 
 ```bash
 .venv/Scripts/python.exe -m pip install -r requirements-docling.txt
+cp .env.example .env                                           # optional
+.venv/Scripts/python.exe -m app.main                           # serves DOC_PORT (8008)
+```
+
+Or drive uvicorn yourself, which is what a container or a process manager
+usually does — `--port` wins, because that path never reads `DOC_PORT`:
+
+```bash
 .venv/Scripts/python.exe -m uvicorn app.main:app --port 8008
 ```
+
+Every setting has a working default, so the `.env` step is optional —
+`.env.example` is there so the whole configuration surface is visible in one
+place, with the reason each knob exists. It is read relative to the working
+directory, and real environment variables override it.
 
 The weights download on first use, so give the first request a few minutes —
 or call `GET /ready`, which reports `false` until they are loaded.
@@ -296,6 +309,7 @@ All `DOC_`-prefixed:
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `DOC_PORT` | `8008` | Port `python -m app.main` serves on. `uvicorn --port` wins when uvicorn is invoked directly. The host is not settable — it stays a uvicorn argument. |
 | `DOC_BACKEND` | `docling` | Layout backend. `docling` is the only supported value; anything else is refused rather than substituted. |
 | `DOC_MAX_UPLOAD_MB` | `50` | Upload size limit |
 | `DOC_MAX_PAGES` | `100` | Page limit per request |

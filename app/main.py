@@ -89,4 +89,32 @@ def create_app() -> FastAPI:
 
 app = create_app()
 
-__all__ = ["app", "create_app"]
+
+def main() -> None:
+    """Serve on the configured port.
+
+    A second way in, for a local run or a deployment that would rather set
+    ``DOC_PORT`` than assemble a command line::
+
+        python -m app.main
+
+    ``uvicorn app.main:app --port 8008`` still works and still wins. This path
+    reads the same settings object the service itself reads, so the port is
+    written down once rather than living only in a shell history.
+
+    The application object is passed rather than the ``"app.main:app"`` import
+    string: under ``python -m`` this module is already loaded as ``__main__``,
+    and the string would import it a second time under its real name, building
+    a second application and warming the backend twice.
+    """
+    import uvicorn
+
+    settings = get_settings()
+    logger.info("serving doc-processor-api on port %d", settings.port)
+    uvicorn.run(app, port=settings.port)
+
+
+if __name__ == "__main__":
+    main()
+
+__all__ = ["app", "create_app", "main"]

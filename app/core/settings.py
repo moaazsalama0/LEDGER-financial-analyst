@@ -32,6 +32,19 @@ class Settings(BaseSettings):
         ),
     )
 
+    port: int = Field(
+        default=8008,
+        gt=0,
+        le=65535,
+        description=(
+            "The port `python -m app.main` serves on. uvicorn's own --port "
+            "still wins when the server is started through its CLI, which is "
+            "what a container or a process manager usually does; this exists "
+            "so the port has one written-down home rather than living only in "
+            "a command line."
+        ),
+    )
+
     max_upload_mb: int = Field(default=50, gt=0)
     max_pages: int = Field(default=100, gt=0)
 
