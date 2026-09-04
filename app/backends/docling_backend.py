@@ -18,8 +18,8 @@ answer validator checks. ``force_ocr=True`` overrides it for the cases where
 the classifier misjudges a page, and for demonstrating the OCR path.
 
 Everything docling-specific is confined to this module. What leaves is
-:class:`~app.backends.base.RawParse`, identical in shape to what the
-text-layer backend produces, so nothing downstream can tell which model ran.
+:class:`~app.backends.base.RawParse`, whose shape is fixed by the seam rather
+than by this library, so nothing downstream can tell which model ran.
 
 The mapping functions below take duck-typed arguments and import nothing from
 docling, which is what lets the whole mapping layer be tested on CPU with no

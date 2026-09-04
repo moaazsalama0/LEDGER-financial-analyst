@@ -16,16 +16,15 @@ python -m venv .venv
 .venv/Scripts/python.exe -m pip install -r requirements.txt   # Windows
 # .venv/bin/python -m pip install -r requirements.txt         # Linux/macOS
 
-.venv/Scripts/python.exe -m pytest -q                          # 418 tests, ~2s, CPU only
-.venv/Scripts/python.exe -m uvicorn app.main:app --port 8001
+.venv/Scripts/python.exe -m pytest -q                          # 427 tests, ~4s, CPU only
 ```
 
-That runs the `textonly` backend, which needs no model. For the production
-deep-learning backend:
+The service runs on Docling, which is the production document-processing path
+and the only backend it serves. Install the weights, then start it:
 
 ```bash
 .venv/Scripts/python.exe -m pip install -r requirements-docling.txt
-DOC_BACKEND=docling .venv/Scripts/python.exe -m uvicorn app.main:app --port 8001
+.venv/Scripts/python.exe -m uvicorn app.main:app --port 8008
 ```
 
 The weights download on first use, so give the first request a few minutes —
@@ -44,7 +43,7 @@ Then:
 
 ```bash
 curl -F file=@report.pdf -F document_id=doc_0417 \
-     http://localhost:8001/process | jq
+     http://127.0.0.1:8008/process | jq
 ```
 
 Note: on a machine with MSYS2 on `PATH`, `python` may resolve to the mingw
@@ -209,7 +208,7 @@ A single unreadable page never fails the document: it is returned with
       ]
     }
   ],
-  "processing": { "backend": "textonly", "duration_ms": 3, "warnings": [] }
+  "processing": { "backend": "docling", "duration_ms": 7681, "warnings": [] }
 }
 ```
 
@@ -245,15 +244,22 @@ upload → validate (type, size, magic bytes, page count, encryption)
 A backend returns `RawParse` — a model-agnostic description of what is on each
 page — and nothing downstream knows which model produced it. That is what
 makes the backend replaceable without touching the API layer, and what lets
-the whole test suite run against a fake with no GPU.
+the whole test suite run against a no-model reader with no GPU.
 
 ### Backends
 
 | Name | Status | Notes |
 |---|---|---|
-| `docling` | **available** | DocLayNet layout model + TableFormer cell structure. This is the backend the deep-learning requirement is about. Needs `requirements-docling.txt`. |
-| `textonly` | default when installed alone | Reads the PDF text layer. No model, no GPU. Ships so retrieval is unblocked and CI stays fast. **Does not satisfy the deep-learning requirement.** |
-| `surya` | planned | Alternative, for the measured backend comparison. |
+| `docling` | **the production path, and the only one served** | DocLayNet layout model + TableFormer cell structure. This is the backend the deep-learning requirement is about. Needs `requirements-docling.txt`. |
+| `textonly` | **retired after Phase 2** | The no-model text-layer control the Phase 2 comparison was measured against. Moved to `evaluation/textonly_baseline.py`; the service does not register it, and `{"backend": "textonly"}` is now refused with `BACKEND_UNAVAILABLE`. Kept so the frozen Phase 2 arm stays reproducible, and because it drives the fast test suite. |
+| `surya` | possible | The seam is unchanged, so a second backend is a registration rather than a rewrite. Nothing is registered speculatively: an entry in the registry is a claim the service will serve it. |
+
+`GET /version` reports exactly one:
+
+```json
+{ "service": "doc-processor-api", "contract_version": "1.0",
+  "default_backend": "docling", "available_backends": ["docling"] }
+```
 
 #### How the Docling backend reads a page
 
@@ -277,10 +283,12 @@ model decides what a region is; the glyphs say how it looks. On a scanned page
 there are no glyphs, and the probe reports "not measured" rather than a
 fabricated default, leaving level assignment to fall back to numbering depth.
 
-Select with `DOC_BACKEND=docling` or per request via `options.backend`. An
-unknown name fails at startup rather than silently falling back: a service
-quietly running a different backend than configured produces results nobody
-can reproduce.
+`options.backend` may still name `docling` per request, and `DOC_BACKEND`
+still selects it, but there is nothing else to select. A name the service does
+not serve fails — at startup if it is configured, with `BACKEND_UNAVAILABLE`
+if it is requested — rather than silently falling back: a service quietly
+running a different backend than asked for produces results nobody can
+reproduce.
 
 ### Configuration
 
@@ -288,7 +296,7 @@ All `DOC_`-prefixed:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DOC_BACKEND` | `textonly` | Default layout backend |
+| `DOC_BACKEND` | `docling` | Layout backend. `docling` is the only supported value; anything else is refused rather than substituted. |
 | `DOC_MAX_UPLOAD_MB` | `50` | Upload size limit |
 | `DOC_MAX_PAGES` | `100` | Page limit per request |
 | `DOC_TEXT_DENSITY_THRESHOLD` | `30` | Chars/page below which a page counts as scanned |
@@ -338,7 +346,11 @@ parse and is neither served from nor written to the same key.
 | `tests/heavy` | The Docling backend against real weights — **excluded by default** |
 
 Everything in the default run works on CPU with no model download and no
-network, in about a second.
+network, in a few seconds. The HTTP tests drive the service with the retired
+Phase 2 text-layer reader (`evaluation/textonly_baseline.py`), registered by
+the test harness and never by the service — that is what keeps the fast suite
+model-free while still parsing a real PDF end to end. What the service itself
+offers is asserted separately, against the registry exactly as it ships.
 
 The Docling *mapping* — label translation, the coordinate flip, span
 arithmetic, header detection — is tested in the fast suite against duck-typed
@@ -373,6 +385,9 @@ change gets consciously accepted instead of happening silently.
 
 ```bash
 .venv/Scripts/python.exe scripts/inspect_document.py report.pdf --backend docling
+
+# the retired Phase 2 control, for comparing a historical parse. This script
+# registers it; the service does not.
 .venv/Scripts/python.exe scripts/inspect_document.py report.pdf --backend textonly
 ```
 
@@ -395,8 +410,8 @@ time.
 ```bash
 python scripts/download_tatdqa.py --splits dev          # 274 docs, 1,644 questions, 156 MB
 
-python scripts/run_extraction_eval.py --backend textonly
 python scripts/run_extraction_eval.py --backend docling
+python scripts/run_extraction_eval.py --backend textonly   # the Phase 2 control
 
 python scripts/run_extraction_eval.py --compare \
     runs/dev-textonly.jsonl runs/dev-docling.jsonl
@@ -437,6 +452,11 @@ cache exists and why the corpus is meant to be parsed once offline.
 > These are the **Phase 2 baseline** numbers, frozen at
 > `baselines/PHASE_2_BASELINE/`. Later phases are recorded in
 > [`PHASES.md`](PHASES.md) and never rewrite this table.
+>
+> `textonly` was the control this comparison needed and is no longer a backend
+> the service offers. Its implementation was moved to
+> `evaluation/textonly_baseline.py` rather than deleted, so this row can still
+> be regenerated: `run_extraction_eval.py` registers it by name.
 
 ### The finding worth acting on
 

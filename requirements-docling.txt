@@ -2,11 +2,12 @@
 #
 # This pulls torch, transformers, and the DocLayNet and TableFormer weights —
 # gigabytes, and minutes of install. The base requirements stay small so the
-# service, its contract package, and its fast test suite install and run in
-# seconds on a machine with no GPU.
+# contract package and the fast test suite install and run in seconds on a
+# machine with no GPU. Serving needs these: docling is the production
+# document-processing path and the only backend the service registers.
 #
 #     pip install -r requirements-docling.txt
-#     DOC_BACKEND=docling uvicorn app.main:app --port 8001
+#     uvicorn app.main:app --port 8008
 #
 # ---------------------------------------------------------------------------
 # READ THIS BEFORE RUNNING THE CORPUS

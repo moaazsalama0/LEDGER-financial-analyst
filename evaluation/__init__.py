@@ -20,4 +20,4 @@ the ways this metric can flatter a parser.
 
 from __future__ import annotations
 
-__all__ = ["dataset", "harness", "matching", "report"]
+__all__ = ["dataset", "harness", "matching", "report", "textonly_baseline"]

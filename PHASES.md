@@ -219,3 +219,57 @@ detection produces a different document from identical bytes and identical
 models. Without the version in the key, measuring this change would have
 silently scored the old build. Phase 2 entries live under `-p1` and remain on
 disk; Phase 2.1 writes `-p2`.
+---
+
+## Phase 2.2 — production hardening: one backend
+
+**Date:** 2026-09-04
+**Processing version:** 2 (unchanged)
+**Measured variable:** none. No number in this file moves, and none was rerun.
+
+Phase 2 needed two backends because a comparison needs a control. Phase 2.1
+settled the remaining extraction question. What was left was a service
+advertising a backend nobody should select: `textonly` recovered no table
+structure at all, which is exactly what made it the right control and exactly
+what makes it the wrong thing to serve.
+
+### What changed
+
+* `app/backends/registry.py` registers **Docling alone**. `GET /version`
+  reports `available_backends: ["docling"]`, and `DOC_BACKEND` now defaults to
+  `docling`.
+* `POST /process` with `{"backend": "textonly"}` is refused with the existing
+  `BACKEND_UNAVAILABLE` error contract — `503`, `requested`, and `available` —
+  rather than quietly parsed by Docling. No new error schema.
+* `registry.reset()` now restores the shipped registrations rather than only
+  dropping instances, so a backend added by a tool or a test cannot leak into
+  a later check of what the service offers.
+* The service's operational port moved **8001 → 8008**.
+
+### What was preserved, and why
+
+The text-layer reader was **moved, not deleted** — from
+`app/backends/textonly_backend.py` to `evaluation/textonly_baseline.py`. It is
+no longer a backend the service knows about, and two jobs still needed it:
+
+1. **Phase 2 stays reproducible.** `baselines/PHASE_2_BASELINE/dev-textonly.jsonl`
+   is a frozen record, and a record nobody can regenerate is an assertion.
+   `scripts/run_extraction_eval.py` registers the baseline by name, so
+   `--backend textonly` reruns the historical arm exactly as it ran. `name`
+   and the `textonly` cache variant are unchanged, so a rerun's provenance
+   lines up with the frozen records.
+2. **The fast suite stays model-free.** It parses a real PDF into a real
+   `RawParse` on CPU in milliseconds, which is what lets validation,
+   assembly, the contract, HTTP, and the cache be exercised on every commit.
+   The test harness registers it; the service never does.
+
+Everything else historical is untouched: the Phase 2 table above, the frozen
+baselines, `runs/dev-textonly.*`, and the `textonly-p1` / `textonly-p2` cache
+variants, which stay addressable under their own directories and cannot be
+mistaken for a Docling parse.
+
+### Contract
+
+`ProcessedDocument` v1.0 is unchanged — no field, enum, or version moved.
+`contract_version` is still `1.0`, and `contracts/.../v1/schema.json` is
+byte-identical.
