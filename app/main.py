@@ -1,7 +1,7 @@
-
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Any, Dict, List
+import time
 
 
 # =========================
@@ -268,6 +268,8 @@ def search(request: SearchRequest):
     global bm25_index
     global bm25_chunks
 
+    start_time = time.perf_counter()
+
     try:
 
         if vector_index is None or bm25_index is None:
@@ -354,7 +356,15 @@ def search(request: SearchRequest):
                 "bounding_box": result["bounding_box"]
             })
 
+        # -------------------------
+        # Latency
+        # -------------------------
+
+        latency = time.perf_counter() - start_time
+
         return {
+            "trace_id": request.trace_id,
+            "latency": latency,
             "evidence": evidence
         }
 
@@ -364,3 +374,4 @@ def search(request: SearchRequest):
             status_code=500,
             detail=str(e)
         )
+
