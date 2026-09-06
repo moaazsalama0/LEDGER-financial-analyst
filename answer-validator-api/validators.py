@@ -25,9 +25,14 @@ def _is_valid_evidence_item(item: Dict[str, Any]) -> bool:
         return False
     if not isinstance(item.get("document_id"), str) or not item.get("document_id"):
         return False
-    # page must be present and int-like (accepting bool excluded)
-    page = item.get("page")
-    if isinstance(page, bool) or not isinstance(page, int):
+    # page_number must be present and int-like (accepting bool excluded).
+    # NOTE: field name is 'page_number' per the agreed contract file (matches
+    # retrieval-api's schema), NOT 'page' as shown in the final-project spec's
+    # own examples. The two source docs disagree; we standardize on
+    # 'page_number' since that's what the rest of the pipeline (retrieval-api,
+    # orchestrator) actually sends.
+    page_number = item.get("page_number")
+    if isinstance(page_number, bool) or not isinstance(page_number, int):
         return False
     return True
 

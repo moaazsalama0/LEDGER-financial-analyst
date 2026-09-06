@@ -18,7 +18,7 @@ def post(payload):
 def test_direct_valid():
     r = post({
         "answer_type": "direct",
-        "evidence": [{"document_id": "doc_017", "page": 1, "section": "Income Statement"}],
+        "evidence": [{"document_id": "doc_017", "page_number": 1, "section": "Income Statement"}],
         "params": {"value": "$142.5M"},
     })
     assert r.status_code == 200
@@ -28,7 +28,7 @@ def test_direct_valid():
 def test_direct_missing_value():
     r = post({
         "answer_type": "direct",
-        "evidence": [{"document_id": "doc_017", "page": 1}],
+        "evidence": [{"document_id": "doc_017", "page_number": 1}],
         "params": {},
     })
     assert r.status_code == 422
@@ -47,8 +47,8 @@ def test_calculated_valid():
     r = post({
         "answer_type": "calculated",
         "evidence": [
-            {"document_id": "doc_041", "page": 2, "section": "Operating Expenses"},
-            {"document_id": "doc_041", "page": 2, "section": "Operating Expenses"},
+            {"document_id": "doc_041", "page_number": 2, "section": "Operating Expenses"},
+            {"document_id": "doc_041", "page_number": 2, "section": "Operating Expenses"},
         ],
         "params": {"value": 13.4, "formula": "(3875-3410)/3410*100"},
     })
@@ -58,7 +58,7 @@ def test_calculated_valid():
 def test_calculated_missing_formula():
     r = post({
         "answer_type": "calculated",
-        "evidence": [{"document_id": "doc_041", "page": 2}],
+        "evidence": [{"document_id": "doc_041", "page_number": 2}],
         "params": {"value": 13.4},
     })
     assert r.status_code == 422
@@ -70,7 +70,7 @@ def test_calculated_missing_formula():
 def test_multi_span_valid():
     r = post({
         "answer_type": "multi_span",
-        "evidence": [{"document_id": "doc_022", "page": 3, "section": "Operating Expenses"}],
+        "evidence": [{"document_id": "doc_022", "page_number": 3, "section": "Operating Expenses"}],
         "params": {"values": ["Marketing", "R&D", "Logistics"]},
     })
     assert r.status_code == 200
@@ -79,7 +79,7 @@ def test_multi_span_valid():
 def test_multi_span_single_value_rejected():
     r = post({
         "answer_type": "multi_span",
-        "evidence": [{"document_id": "doc_022", "page": 3}],
+        "evidence": [{"document_id": "doc_022", "page_number": 3}],
         "params": {"values": ["Marketing"]},
     })
     assert r.status_code == 422

@@ -23,12 +23,13 @@ if not logger.handlers:
 
 
 def _first_evidence_repr(evidence: list) -> dict:
-    """The spec's success example logs a single evidence dict (document_id, page),
-    not the full list. We log the first item to match that; empty list -> {}."""
+    """The spec's success example logs a single evidence dict (document_id,
+    page_number), not the full list. We log the first item to match that;
+    empty list -> {}. Field is 'page_number' per the agreed contract file."""
     if not evidence:
         return {}
     first = evidence[0]
-    return {"document_id": first.get("document_id"), "page": first.get("page")}
+    return {"document_id": first.get("document_id"), "page_number": first.get("page_number")}
 
 
 def log_success(answer_type: str, evidence: list) -> None:

@@ -48,10 +48,15 @@ pytest tests/ -v
 ```json
 {
   "answer_type": "direct",
-  "evidence": [{ "document_id": "doc_017", "page": 1, "section": "Income Statement" }],
+  "evidence": [{ "document_id": "doc_017", "page_number": 1, "section": "Income Statement" }],
   "params": { "value": "$142.5M" }
 }
 ```
+
+> **Field name note:** evidence uses `page_number`, matching the agreed contract file
+> (same field name used by retrieval-api) — not `page` as shown in the final-project
+> spec's own prose examples. The two source docs disagree on this; this service and
+> the rest of the pipeline (retrieval-api, orchestrator) use `page_number`.
 
 **Success response** (`200`):
 ```json
@@ -72,13 +77,13 @@ pytest tests/ -v
 | `multi_span` | `values` (array, 2+ items) | ≥1 citation required |
 | `insufficient_evidence` | `reason` (string) | optional, may be empty |
 
-Every evidence item must have a non-empty string `document_id` and an integer `page`.
+Every evidence item must have a non-empty string `document_id` and an integer `page_number`.
 
 ## Console log formats
 
 Success:
 ```
-[ANSWER-VALIDATOR-SUCCESS] Received and validated answer of type 'calculated' with evidence {'document_id': 'doc_041', 'page': 2}
+[ANSWER-VALIDATOR-SUCCESS] Received and validated answer of type 'calculated' with evidence {'document_id': 'doc_041', 'page_number': 2}
 ```
 
 Error (envelope-level, e.g. missing evidence or bad `answer_type`):

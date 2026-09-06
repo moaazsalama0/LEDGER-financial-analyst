@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 class EvidenceItem(BaseModel):
     document_id: Optional[str] = None
-    page: Optional[Any] = None  # validated for real (must be int-like) in validators.py
+    page_number: Optional[Any] = None  # validated for real (must be int-like) in validators.py
     section: Optional[str] = None
 
 
