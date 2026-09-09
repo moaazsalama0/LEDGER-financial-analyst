@@ -1,11 +1,11 @@
-GET  /health
+- GET  /health
 
-POST /events/retrieval
-POST /events/agent
-POST /events/validator
-POST /events/document-processor
+- POST /events/retrieval
+- POST /events/agent
+- POST /events/validator
+- POST /events/document-processor
 
-POST /evaluate
+- POST /evaluate
 
-GET    /traces/{trace_id}
-DELETE /traces/{trace_id}
+- GET    /traces/{trace_id}
+- DELETE /traces/{trace_id}
