@@ -2,61 +2,83 @@
 from sentence_transformers import CrossEncoder
 
 
-DEFAULT_RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+DEFAULT_RERANKER = (
+    "BAAI/bge-reranker-base"
+)
 
 
-def load_reranker(
-    model_name=DEFAULT_RERANKER_MODEL
-):
-    return CrossEncoder(model_name)
+class Reranker:
 
-
-def rerank_results(
-    query,
-    candidates,
-    reranker,
-    top_k=5
-):
-    if not query or not str(query).strip():
-        raise ValueError("Query must not be empty.")
-
-    if reranker is None:
-        raise ValueError("Reranker must not be None.")
-
-    if not candidates:
-        return []
-
-    pairs = [
-        [str(query), str(candidate.get("content", ""))]
-        for candidate in candidates
-    ]
-
-    scores = reranker.predict(pairs)
-
-    reranked = []
-
-    for candidate, score in zip(candidates, scores):
-        result = candidate.copy()
-        result["reranker_score"] = float(score)
-        reranked.append(result)
-
-    reranked.sort(
-        key=lambda x: x["reranker_score"],
-        reverse=True
-    )
-
-    final_k = min(
-        max(int(top_k), 1),
-        len(reranked)
-    )
-
-    final_results = []
-
-    for rank, result in enumerate(
-        reranked[:final_k],
-        start=1
+    def __init__(
+        self,
+        model_name: str = DEFAULT_RERANKER,
     ):
-        result["rank"] = rank
-        final_results.append(result)
 
-    return final_results
+        self.model_name = model_name
+
+        self.model = CrossEncoder(
+            model_name,
+            max_length=512,
+        )
+
+    def rerank(
+        self,
+        query: str,
+        candidates,
+        top_k: int = 5,
+    ):
+
+        if not candidates:
+            return []
+
+        pairs = [
+            (
+                query,
+                result["chunk"]["content"],
+            )
+            for result in candidates
+        ]
+
+        scores = self.model.predict(
+            pairs,
+            show_progress_bar=False,
+        )
+
+        reranked = []
+
+        for result, score in zip(
+            candidates,
+            scores,
+        ):
+
+            reranked.append({
+                "chunk_id": result["chunk_id"],
+                "rank": None,
+
+                # Keep RRF score for traceability
+                "rrf_score": result[
+                    "rrf_score"
+                ],
+
+                "reranker_score": float(
+                    score
+                ),
+
+                "chunk": result["chunk"],
+            })
+
+        reranked.sort(
+            key=lambda x: x[
+                "reranker_score"
+            ],
+            reverse=True,
+        )
+
+        for rank, result in enumerate(
+            reranked,
+            start=1,
+        ):
+
+            result["rank"] = rank
+
+        return reranked[:top_k]
