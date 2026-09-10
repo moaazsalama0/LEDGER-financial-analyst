@@ -1,0 +1,83 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Python virtual environments
+.venv/
+.venv-*/
+venv/
+env/
+**/.venv/
+**/.venv-*/
+**/venv/
+**/env/
+
+# Python caches, tests, and coverage
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+**/.pytest_cache/
+.mypy_cache/
+**/.mypy_cache/
+.ruff_cache/
+**/.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+**/htmlcov/
+
+# Packaging and build output
+build/
+dist/
+**/build/
+**/dist/
+*.egg-info/
+**/*.egg-info/
+
+# Runtime output
+*.log
+logs/
+**/logs/
+tmp/
+temp/
+uploads/
+outputs/
+flagged/
+gradio_cached_examples/
+.gradio/
+*.sqlite
+*.sqlite3
+*.pid
+
+# Generated retrieval indexes and model caches
+*.faiss
+*.pkl
+*.pickle
+.cache/
+**/.cache/
+.models/
+**/.models/
+hf_cache/
+torch_cache/
+transformers_cache/
+
+# Large local datasets (service-specific manifests may be force-added)
+data/
+**/data/
+
+# Editors and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~

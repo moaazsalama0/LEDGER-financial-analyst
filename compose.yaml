@@ -1,0 +1,152 @@
+name: ledger
+
+x-healthcheck: &healthcheck
+  interval: 10s
+  timeout: 5s
+  retries: 12
+  start_period: 10s
+
+services:
+  agent-service:
+    image: ledger-agent-service:local
+    build:
+      context: .
+      dockerfile: agent-service/Dockerfile
+    env_file:
+      - agent-service/.env
+    environment:
+      RETRIEVAL_API_URL: http://retrieval-api:8001
+      RETRIEVAL_MOCK: ${RETRIEVAL_MOCK:-false}
+    ports:
+      - "8004:8004"
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8004/health', timeout=3)"]
+    restart: unless-stopped
+
+  answer-validator-api:
+    image: ledger-answer-validator-api:local
+    build:
+      context: .
+      dockerfile: answer-validator-api/Dockerfile
+    ports:
+      - "8006:8006"
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8006/health', timeout=3)"]
+    restart: unless-stopped
+
+  eval-service:
+    image: ledger-eval-service:local
+    build:
+      context: .
+      dockerfile: eval-service/Dockerfile
+    environment:
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+      LANGFUSE_TRACING_ENVIRONMENT: ${LANGFUSE_TRACING_ENVIRONMENT:-development}
+    ports:
+      - "8005:8005"
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8005/health', timeout=3)"]
+    restart: unless-stopped
+
+  orchestrator-service:
+    image: ledger-orchestrator-service:local
+    build:
+      context: .
+      dockerfile: orchestrator-service/Dockerfile
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8000
+      AGENT_SERVICE_URL: http://agent-service:8004
+      VALIDATOR_SERVICE_URL: http://answer-validator-api:8006
+      PROCESSOR_SERVICE_URL: http://processor:8008
+      RETRIEVAL_SERVICE_URL: http://retrieval-api:8001
+      EVAL_SERVICE_URL: http://eval-service:8005
+      UI_SERVICE_URL: http://ui-service:8007
+      PROCESSOR_TIMEOUT_SECONDS: 900
+    ports:
+      - "8000:8000"
+    depends_on:
+      agent-service:
+        condition: service_healthy
+      answer-validator-api:
+        condition: service_healthy
+      retrieval-api:
+        condition: service_healthy
+      processor:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck
+      # /health probes downstream services and can legitimately take longer
+      # when the optional full-profile services are absent. Use a local-only
+      # endpoint for container liveness.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/openapi.json', timeout=3)"]
+    restart: unless-stopped
+
+  ui-service:
+    image: ledger-ui-service:local
+    build:
+      context: .
+      dockerfile: ui-service/Dockerfile
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8007
+      ORCHESTRATOR_URL: http://orchestrator-service:8000
+      SHARE: "false"
+    ports:
+      - "8007:8007"
+    depends_on:
+      orchestrator-service:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8007/', timeout=3)"]
+    restart: unless-stopped
+
+  retrieval-api:
+    image: ledger-retrieval-api:local
+    build:
+      context: .
+      dockerfile: retrieval-api/Dockerfile
+    environment:
+      HF_HOME: /models/huggingface
+    volumes:
+      - huggingface-cache:/models/huggingface
+    ports:
+      - "8001:8001"
+    healthcheck:
+      <<: *healthcheck
+      start_period: 900s
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
+    restart: unless-stopped
+
+  processor:
+    image: ledger-processor:local
+    build:
+      context: .
+      dockerfile: processor/Dockerfile
+    environment:
+      DOC_PORT: 8008
+      DOC_CACHE_DIR: /data/document-cache
+      DOC_CACHE_ENABLED: "true"
+      HF_HOME: /models/huggingface
+    volumes:
+      - huggingface-cache:/models/huggingface
+      - processor-document-cache:/data/document-cache
+      - rapidocr-cache:/usr/local/lib/python3.11/site-packages/rapidocr/models
+    ports:
+      - "8008:8008"
+    healthcheck:
+      <<: *healthcheck
+      start_period: 900s
+      test: ["CMD", "python", "-c", "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8008/ready', timeout=3)); assert d.get('ready') is True"]
+    restart: unless-stopped
+
+volumes:
+  huggingface-cache:
+  processor-document-cache:
+  rapidocr-cache:

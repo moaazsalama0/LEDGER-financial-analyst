@@ -1,0 +1,16 @@
+**/.git
+**/.venv
+**/venv
+.venv-lite
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.env
+**/.cache
+**/runs
+**/data
+**/*.pdf
+**/*.png
+**/*.jpg
+**/*.jpeg
+**/*.webp
