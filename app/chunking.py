@@ -1,4 +1,3 @@
-%%writefile /content/retrieval-api/app/chunking.py
 
 import re
 
