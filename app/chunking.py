@@ -1,4 +1,3 @@
-
 import re
 
 
@@ -59,50 +58,84 @@ def split_text(
 
 def build_table_content(table: dict) -> str:
     """
-    Convert a table into searchable text.
+    Convert OCR table data into searchable text.
 
-    Supports common table representations while preserving
-    table metadata separately.
+    Prefer the complete markdown representation when available,
+    because it preserves column headers, row values, and table
+    structure.
+
+    Falls back to column_headers, rows, and raw text when
+    markdown is not available.
     """
 
+    title = clean_text(table.get("title", ""))
+    markdown = clean_text(table.get("markdown", ""))
+
+    # Prefer the complete OCR markdown representation.
+    if markdown:
+        parts = []
+
+        if title:
+            parts.append(title)
+
+        parts.append(markdown)
+
+        return "\n".join(parts)
+
+    # Fallback for tables without markdown.
     parts = []
 
-    title = table.get("title")
     if title:
-        parts.append(str(title))
+        parts.append(title)
 
     headers = table.get("column_headers")
 
     if headers:
         parts.append(
-            "Columns: " + " | ".join(map(str, headers))
+            "Columns: " + " | ".join(
+                clean_text(str(header))
+                for header in headers
+            )
         )
 
     rows = table.get("rows")
 
     if rows:
         for row in rows:
+
             if isinstance(row, dict):
                 parts.append(
                     " | ".join(
-                        f"{k}: {v}"
-                        for k, v in row.items()
+                        f"{clean_text(str(key))}: "
+                        f"{clean_text(str(value))}"
+                        for key, value in row.items()
                     )
                 )
+
             elif isinstance(row, list):
                 parts.append(
-                    " | ".join(map(str, row))
+                    " | ".join(
+                        clean_text(str(cell))
+                        for cell in row
+                    )
                 )
-            else:
-                parts.append(str(row))
 
-    # Some OCR contracts may already provide table text
-    raw_text = table.get("text")
+            else:
+                parts.append(
+                    clean_text(str(row))
+                )
+
+    # Some OCR contracts may already provide table text.
+    raw_text = clean_text(table.get("text", ""))
 
     if raw_text:
-        parts.append(str(raw_text))
+        parts.append(raw_text)
 
-    return clean_text(" ".join(parts))
+    return "\n".join(
+        part
+        for part in parts
+        if part
+    )
 
 
 def build_section_chunks(document: dict):
