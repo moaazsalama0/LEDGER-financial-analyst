@@ -38,6 +38,8 @@ class Evidence(BaseModel):
     page: Optional[int] = None
     page_number: Optional[int] = None
     section: Optional[str] = None
+    content_type: Optional[str] = None
+    snippet: Optional[str] = None
 
     @model_validator(mode="after")
     def _mirror_page_fields(self) -> "Evidence":
@@ -49,11 +51,22 @@ class Evidence(BaseModel):
 
     def as_contract_dict(self) -> dict:
         """Emit both page keys so downstream services can read whichever they expect."""
-        d = {"document_id": self.document_id, "page": self.page, "page_number": self.page_number}
+        d = {
+            "document_id": self.document_id,
+            "page": self.page,
+            "page_number": self.page_number,
+        }
+
         if self.section is not None:
             d["section"] = self.section
-        return d
 
+        if self.content_type is not None:
+            d["content_type"] = self.content_type
+
+        if self.snippet is not None:
+            d["snippet"] = self.snippet
+
+        return d
 
 # ---------------------------------------------------------------------------
 # Agent-service response (Orchestrator <- agent-service)
@@ -118,8 +131,70 @@ class ValidatorRejectedResponse(BaseModel):
 class UIFinalResponse(BaseModel):
     status: str
     answer: Optional[Union[str, float, int, List[Any]]] = None
+    # Extension beyond the base contract: the documented "To User Interface"
+    # shape only has status/answer/evidence, but the UI benefits from
+    # knowing which of the 4 LEDGER answer types produced this answer
+    # (e.g. to render calculated vs multi_span differently).
+    answer_type: Optional[AnswerType] = None
+    params: Optional[dict] = None
     evidence: List[dict] = Field(default_factory=list)
     # Extension beyond the base contract: surfaced only on non-"validated"
     # outcomes so the UI can show *why* (rejected / upstream error / timeout).
     reason: Optional[str] = None
     trace_id: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Outbound: Orchestrator -> UI  (POST /documents/upload contract shape)
+#
+# doc-processor-api's and retrieval-api's own response bodies are internal
+# to the upload flow (consumed and adapted inside orchestrator.py) — the UI
+# only ever sees one of these two simple shapes.
+# ---------------------------------------------------------------------------
+class UploadSuccessResponse(BaseModel):
+    status: Literal["success"] = "success"
+    document_id: str
+    message: str = "Document processed and indexed successfully"
+
+
+class UploadErrorResponse(BaseModel):
+    status: Literal["error"] = "error"
+    stage: Literal["processor", "retrieval"]
+    message: str
+# ---------------------------------------------------------------------------
+# Outbound: Orchestrator -> UI  (GET /documents contract shape)
+#
+# NOT part of the official Contracts PDF — this is an orchestrator-only
+# addition for the Gradio dashboard.
+# ---------------------------------------------------------------------------
+class StructuredValue(BaseModel):
+    """One extracted cell value — the Final Project brief's "any extracted
+    structured values" dashboard requirement."""
+    row: Optional[str] = None
+    column: Optional[str] = None
+    value: Optional[Union[str, float, int]] = None
+
+
+class TableSummary(BaseModel):
+    """One detected table — the Final Project brief's "detected tables"
+    dashboard requirement."""
+    table_id: Optional[str] = None
+    page_number: Optional[int] = None
+    n_rows: Optional[int] = None
+    n_cols: Optional[int] = None
+    sample_values: List[StructuredValue] = Field(default_factory=list)
+
+
+class IndexedDocument(BaseModel):
+    document_id: str
+    document_title: str
+    filename: str
+    page_count: Optional[int] = None
+    table_count: Optional[int] = None
+    tables: List[TableSummary] = Field(default_factory=list)
+    indexed_at: str  # ISO-8601 timestamp, UTC
+
+
+class DocumentsListResponse(BaseModel):
+    count: int
+    documents: List[IndexedDocument]
