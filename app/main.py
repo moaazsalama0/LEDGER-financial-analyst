@@ -1,377 +1,673 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import Any, Dict, List
+%%writefile /content/retrieval-api/app/main.py
+
+from typing import List, Optional, Any
 import time
 
-
-# =========================
-# Chunking
-# =========================
-
-from app.chunking import (
-    normalize_blocks,
-    section_aware_chunking,
-    table_aware_chunking
-)
+from fastapi import FastAPI
+from pydantic import BaseModel, Field
 
 
-# =========================
-# Embeddings
-# =========================
-
-from app.embeddings import (
-    load_embedding_model,
-    generate_embeddings,
-    embed_query
-)
+from .chunking import build_retrieval_corpus
+from .embeddings import EmbeddingModel
+from .vector_store import VectorStore
+from .bm25_retriever import BM25Retriever
+from .hybrid_retriever import HybridRetriever
+from .reranker import Reranker
 
 
-# =========================
-# Vector Store
-# =========================
-
-from app.vector_store import (
-    build_vector_index,
-    build_metadata_store,
-    validate_index_metadata,
-    dense_search
-)
-
-
-# =========================
-# BM25
-# =========================
-
-from app.bm25_retriever import (
-    build_bm25_index,
-    bm25_search
-)
-
-
-# =========================
-# Hybrid Retrieval
-# =========================
-
-from app.hybrid_retriever import (
-    reciprocal_rank_fusion
-)
-
-
-# =========================
-# Reranker
-# =========================
-
-from app.reranker import (
-    load_reranker,
-    rerank_results
-)
-
-
-# =========================
-# FastAPI App
-# =========================
+# ============================================================
+# APP
+# ============================================================
 
 app = FastAPI(
     title="LEDGER Retrieval API",
-    version="1.0.0"
+    version="1.0.0",
 )
 
 
-# =========================
-# Configuration
-# =========================
+# ============================================================
+# NORMALIZATION
+# ============================================================
 
-CHUNK_SIZE = 1000
-EMBEDDING_BATCH_SIZE = 32
+def normalize_document(doc):
+    """
+    Convert raw OCR document schema into the schema expected
+    by the Retrieval pipeline.
+    """
 
-RETRIEVAL_K = 30
-FINAL_K = 5
+    # Preserve the complete original OCR document
+    normalized = dict(doc)
+
+    # --------------------------------------------------------
+    # Document-level fields
+    # --------------------------------------------------------
+
+    normalized.setdefault("sections", [])
+    normalized.setdefault("pages", [])
+    normalized.setdefault("tables", [])
+    normalized.setdefault("processing", {})
+
+    # OCR uses filename.
+    # Retrieval uses document_title.
+    if not normalized.get("document_title"):
+
+        normalized["document_title"] = normalized.get(
+            "filename",
+            normalized.get(
+                "document_id",
+                "unknown_document"
+            )
+        )
+
+    # --------------------------------------------------------
+    # Pages
+    # --------------------------------------------------------
+
+    normalized_pages = []
+
+    for page in normalized["pages"]:
+
+        # Preserve all original page fields
+        page_copy = dict(page)
+
+        page_copy.setdefault(
+            "blocks",
+            []
+        )
+
+        page_copy.setdefault(
+            "reading_order",
+            []
+        )
+
+        normalized_blocks = []
+
+        # ----------------------------------------------------
+        # Blocks
+        # ----------------------------------------------------
+
+        for block in page_copy["blocks"]:
+
+            # Preserve all original OCR fields
+            block_copy = dict(block)
+
+            # ------------------------------------------------
+            # Original OCR metadata
+            # ------------------------------------------------
+
+            block_copy.setdefault(
+                "block_id",
+                None
+            )
+
+            block_copy.setdefault(
+                "page_number",
+                page_copy.get("page_number")
+            )
+
+            block_copy.setdefault(
+                "type",
+                "text"
+            )
+
+            block_copy.setdefault(
+                "heading_level",
+                None
+            )
+
+            block_copy.setdefault(
+                "section_id",
+                None
+            )
+
+            block_copy.setdefault(
+                "order_index",
+                None
+            )
+
+            # ------------------------------------------------
+            # text -> content
+            # ------------------------------------------------
+
+            if not block_copy.get("content"):
+
+                block_copy["content"] = block_copy.get(
+                    "text",
+                    ""
+                )
+
+            # ------------------------------------------------
+            # bbox -> bounding_box
+            # ------------------------------------------------
+
+            if not block_copy.get("bounding_box"):
+
+                block_copy["bounding_box"] = block_copy.get(
+                    "bbox"
+                )
+
+            # ------------------------------------------------
+            # type -> content_type
+            # ------------------------------------------------
+
+            if not block_copy.get("content_type"):
+
+                if block_copy.get("type") == "table":
+
+                    block_copy["content_type"] = "table"
+
+                else:
+
+                    block_copy["content_type"] = "text"
+
+            # ------------------------------------------------
+            # Section
+            # ------------------------------------------------
+
+            if not block_copy.get("section"):
+
+                section_id = block_copy.get(
+                    "section_id"
+                )
+
+                section_title = None
+
+                if section_id:
+
+                    for section in normalized.get(
+                        "sections",
+                        []
+                    ):
+
+                        if section.get(
+                            "section_id"
+                        ) == section_id:
+
+                            section_title = section.get(
+                                "title"
+                            )
+
+                            break
+
+                block_copy["section"] = section_title
+
+            # ------------------------------------------------
+            # Table ID
+            # ------------------------------------------------
+
+            block_copy.setdefault(
+                "table_id",
+                None
+            )
+
+            normalized_blocks.append(
+                block_copy
+            )
+
+        page_copy["blocks"] = normalized_blocks
+
+        normalized_pages.append(
+            page_copy
+        )
+
+    normalized["pages"] = normalized_pages
+
+    return normalized
 
 
-# =========================
-# Request Schemas
-# =========================
+# ============================================================
+# INGESTION CONTRACT
+# ============================================================
+
+class OCRBlock(BaseModel):
+
+    # Original OCR metadata
+    block_id: Optional[str] = None
+
+    page_number: Optional[int] = None
+
+    type: Optional[str] = "text"
+
+    heading_level: Optional[int] = None
+
+    section_id: Optional[str] = None
+
+    order_index: Optional[int] = None
+
+    # Retrieval fields
+    section: Optional[str] = None
+
+    content: str = ""
+
+    content_type: str = "text"
+
+    bounding_box: Optional[Any] = None
+
+    table_id: Optional[str] = None
+
+
+class OCRPage(BaseModel):
+
+    page_number: int
+
+    blocks: List[OCRBlock]
+
+    reading_order: List[Any] = []
+
 
 class IngestRequest(BaseModel):
-    document_id: str
-    document_title: str | None = None
-    pages: List[Dict[str, Any]]
-    sections: List[Dict[str, Any]] = []
-    tables: List[Dict[str, Any]] = []
 
+    document_id: str
+
+    document_title: str
+
+    pages: List[OCRPage]
+
+    # Document-level fields required by the
+    # retrieval chunking pipeline.
+    sections: List[Any] = []
+
+    tables: List[Any] = []
+
+    processing: dict = {}
+
+
+# ============================================================
+# SEARCH CONTRACT
+# ============================================================
 
 class SearchRequest(BaseModel):
-    trace_id: str | None = None
+
+    trace_id: str
+
     query: str
-    top_k: int = RETRIEVAL_K
+
+    top_k: int = Field(
+        default=5,
+        ge=1,
+        le=30,
+    )
 
 
-# =========================
-# Runtime State
-# =========================
+# ============================================================
+# RETRIEVED EVIDENCE CONTRACT
+# ============================================================
 
-embedding_model = load_embedding_model()
-reranker = load_reranker()
+class RetrievedEvidence(BaseModel):
 
-vector_index = None
-vector_metadata = []
+    document_id: str
 
-bm25_index = None
-bm25_chunks = []
+    chunk_id: str
 
-retrieval_chunks = []
+    rank: int
 
+    score: float
 
-# =========================
-# Evidence Helpers
-# =========================
+    document_title: Optional[str] = None
 
-def get_evidence_page_number(page_number):
+    page_number: Optional[int] = None
 
-    if isinstance(page_number, list):
+    section: Optional[str] = None
 
-        if not page_number:
-            return None
+    content: str
 
-        return page_number[0]
+    content_type: str
 
-    return page_number
+    table_id: Optional[str] = None
+
+    bounding_box: Optional[Any] = None
 
 
-# =========================
-# Health Check
-# =========================
+class SearchResponse(BaseModel):
+
+    trace_id: str
+
+    latency_ms: float
+
+    evidence: List[RetrievedEvidence]
+
+
+# ============================================================
+# RETRIEVAL COMPONENTS
+# ============================================================
+
+embedding_model = EmbeddingModel()
+
+vector_store = VectorStore(
+    embedding_model
+)
+
+bm25_retriever = BM25Retriever()
+
+hybrid_retriever = HybridRetriever(
+    vector_store=vector_store,
+    bm25_retriever=bm25_retriever,
+    rrf_k=60,
+)
+
+reranker = Reranker()
+
+
+# ============================================================
+# INTERNAL STATE
+# ============================================================
+
+DOCUMENTS = []
+
+RETRIEVAL_CORPUS = []
+
+
+# ============================================================
+# DOCUMENT INGESTION
+# ============================================================
+
+@app.post("/ingest")
+def ingest(raw_document: dict):
+
+    global DOCUMENTS
+    global RETRIEVAL_CORPUS
+
+    # --------------------------------------------------------
+    # Step 1: Normalize OCR output
+    # --------------------------------------------------------
+
+    normalized_document = normalize_document(
+        raw_document
+    )
+
+    # --------------------------------------------------------
+    # Step 2: Validate retrieval document
+    # --------------------------------------------------------
+
+    request = IngestRequest.model_validate(
+        normalized_document
+    )
+
+    # --------------------------------------------------------
+    # Step 3: Keep the ORIGINAL normalized document
+    #
+    # We validate the document with Pydantic, but we do NOT
+    # use request.model_dump() here.
+    #
+    # This preserves all OCR fields that may be required by
+    # the chunking pipeline.
+    # --------------------------------------------------------
+
+    document = normalized_document
+
+    # --------------------------------------------------------
+    # Store document
+    # --------------------------------------------------------
+
+    DOCUMENTS = [document]
+
+    # --------------------------------------------------------
+    # Step 4: Build retrieval corpus
+    # --------------------------------------------------------
+
+    RETRIEVAL_CORPUS = build_retrieval_corpus(
+        document
+    )
+
+    # --------------------------------------------------------
+    # DEBUG
+    # --------------------------------------------------------
+
+    print("\n========== INGEST DEBUG ==========")
+
+    print(
+        "Document ID:",
+        document.get("document_id")
+    )
+
+    print(
+        "Document title:",
+        document.get("document_title")
+    )
+
+    print(
+        "Pages:",
+        len(
+            document.get(
+                "pages",
+                []
+            )
+        )
+    )
+
+    print(
+        "Blocks:",
+        sum(
+            len(
+                page.get(
+                    "blocks",
+                    []
+                )
+            )
+            for page in document.get(
+                "pages",
+                []
+            )
+        )
+    )
+
+    print(
+        "Sections:",
+        len(
+            document.get(
+                "sections",
+                []
+            )
+        )
+    )
+
+    print(
+        "Tables:",
+        len(
+            document.get(
+                "tables",
+                []
+            )
+        )
+    )
+
+    print(
+        "Chunks generated:",
+        len(RETRIEVAL_CORPUS)
+    )
+
+    if RETRIEVAL_CORPUS:
+
+        print(
+            "First chunk:"
+        )
+
+        print(
+            RETRIEVAL_CORPUS[0]
+        )
+
+    print("==================================\n")
+
+    # --------------------------------------------------------
+    # Step 5: Dense index
+    # --------------------------------------------------------
+
+    vector_store.build(
+        RETRIEVAL_CORPUS
+    )
+
+    # --------------------------------------------------------
+    # Step 6: BM25 index
+    # --------------------------------------------------------
+
+    bm25_retriever.build(
+        RETRIEVAL_CORPUS
+    )
+
+    # --------------------------------------------------------
+    # Response
+    # --------------------------------------------------------
+
+    return {
+        "status": "success",
+
+        "document_id": request.document_id,
+
+        "document_title": request.document_title,
+
+        "chunks_indexed": len(
+            RETRIEVAL_CORPUS
+        ),
+    }
+
+
+# ============================================================
+# SEMANTIC EVIDENCE SEARCH
+# ============================================================
+
+@app.post(
+    "/search",
+    response_model=SearchResponse,
+)
+def search(
+    request: SearchRequest
+):
+
+    # --------------------------------------------------------
+    # Start latency measurement
+    # --------------------------------------------------------
+
+    start_time = time.perf_counter()
+
+    # --------------------------------------------------------
+    # Request parameters
+    # --------------------------------------------------------
+
+    trace_id = request.trace_id
+
+    query = request.query
+
+    top_k = request.top_k
+
+    # --------------------------------------------------------
+    # Hybrid retrieval
+    # --------------------------------------------------------
+
+    rrf_results = hybrid_retriever.search(
+        query=query,
+        retrieval_k=30,
+        final_k=30,
+    )
+
+    # --------------------------------------------------------
+    # Reranking
+    # --------------------------------------------------------
+
+    reranked_results = reranker.rerank(
+        query=query,
+        candidates=rrf_results,
+        top_k=top_k,
+    )
+
+    # --------------------------------------------------------
+    # Build evidence
+    # --------------------------------------------------------
+
+    evidence = []
+
+    for result in reranked_results:
+
+        chunk = result["chunk"]
+
+        evidence.append(
+            RetrievedEvidence(
+
+                document_id=chunk[
+                    "document_id"
+                ],
+
+                chunk_id=result[
+                    "chunk_id"
+                ],
+
+                rank=result[
+                    "rank"
+                ],
+
+                score=result[
+                    "reranker_score"
+                ],
+
+                document_title=chunk.get(
+                    "document_title"
+                ),
+
+                page_number=chunk.get(
+                    "page_number"
+                ),
+
+                section=chunk.get(
+                    "section"
+                ),
+
+                content=chunk[
+                    "content"
+                ],
+
+                content_type=chunk.get(
+                    "content_type",
+                    "text",
+                ),
+
+                table_id=chunk.get(
+                    "table_id"
+                ),
+
+                bounding_box=chunk.get(
+                    "bounding_box"
+                ),
+            )
+        )
+
+    # --------------------------------------------------------
+    # Latency
+    # --------------------------------------------------------
+
+    latency_ms = (
+        time.perf_counter() - start_time
+    ) * 1000
+
+    # --------------------------------------------------------
+    # Response
+    # --------------------------------------------------------
+
+    return {
+        "trace_id": trace_id,
+
+        "latency_ms": round(
+            latency_ms,
+            2
+        ),
+
+        "evidence": evidence,
+    }
+
+
+# ============================================================
+# HEALTH CHECK
+# ============================================================
 
 @app.get("/health")
 def health():
 
     return {
         "status": "ok",
-        "service": "retrieval-api"
+
+        "documents": len(
+            DOCUMENTS
+        ),
+
+        "chunks": len(
+            RETRIEVAL_CORPUS
+        ),
     }
-
-
-# =========================
-# Ingest
-# =========================
-
-@app.post("/ingest")
-def ingest_document(request: IngestRequest):
-
-    global vector_index
-    global vector_metadata
-    global bm25_index
-    global bm25_chunks
-    global retrieval_chunks
-
-    try:
-
-        # Convert request to dictionary
-        doc = request.model_dump()
-
-        # -------------------------
-        # Normalize OCR blocks
-        # -------------------------
-
-        normalized_blocks = normalize_blocks(doc)
-
-        # -------------------------
-        # Section-Aware text chunks
-        # -------------------------
-
-        text_chunks = section_aware_chunking(
-            normalized_blocks,
-            chunk_size=CHUNK_SIZE
-        )
-
-        # -------------------------
-        # Table-Aware chunks
-        # -------------------------
-
-        table_chunks = table_aware_chunking(doc)
-
-        # -------------------------
-        # Combine Retrieval Corpus
-        # -------------------------
-
-        retrieval_chunks = (
-            text_chunks +
-            table_chunks
-        )
-
-        if not retrieval_chunks:
-            raise ValueError(
-                "No valid chunks were created from the document."
-            )
-
-        # -------------------------
-        # Dense Embeddings
-        # -------------------------
-
-        embeddings, valid_chunks = generate_embeddings(
-            retrieval_chunks,
-            embedding_model,
-            batch_size=EMBEDDING_BATCH_SIZE
-        )
-
-        # -------------------------
-        # FAISS Index
-        # -------------------------
-
-        vector_index = build_vector_index(
-            embeddings
-        )
-
-        vector_metadata = build_metadata_store(
-            valid_chunks
-        )
-
-        validate_index_metadata(
-            vector_index,
-            vector_metadata
-        )
-
-        # -------------------------
-        # BM25 Index
-        # -------------------------
-
-        bm25_index, bm25_chunks = build_bm25_index(
-            valid_chunks
-        )
-
-        return {
-            "status": "success",
-            "document_id": request.document_id,
-            "num_text_chunks": len(text_chunks),
-            "num_table_chunks": len(table_chunks),
-            "num_retrieval_chunks": len(retrieval_chunks),
-            "num_vectors": vector_index.ntotal
-        }
-
-    except Exception as e:
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
-
-
-# =========================
-# Search
-# =========================
-
-@app.post("/search")
-def search(request: SearchRequest):
-
-    global vector_index
-    global vector_metadata
-    global bm25_index
-    global bm25_chunks
-
-    start_time = time.perf_counter()
-
-    try:
-
-        if vector_index is None or bm25_index is None:
-            raise ValueError(
-                "No document has been ingested yet."
-            )
-
-        if not request.query.strip():
-            raise ValueError(
-                "Query must not be empty."
-            )
-
-        # -------------------------
-        # Dense Retrieval
-        # -------------------------
-
-        query_embedding = embed_query(
-            request.query,
-            embedding_model
-        )
-
-        dense_results = dense_search(
-            query_embedding,
-            vector_index,
-            vector_metadata,
-            top_k=RETRIEVAL_K
-        )
-
-        # -------------------------
-        # BM25 Retrieval
-        # -------------------------
-
-        bm25_results = bm25_search(
-            request.query,
-            bm25_index,
-            bm25_chunks,
-            top_k=RETRIEVAL_K
-        )
-
-        # -------------------------
-        # Hybrid Retrieval - RRF
-        # -------------------------
-
-        rrf_results = reciprocal_rank_fusion(
-            [dense_results, bm25_results],
-            top_k=RETRIEVAL_K
-        )
-
-        # -------------------------
-        # Reranking
-        # -------------------------
-
-        reranked_results = rerank_results(
-            request.query,
-            rrf_results,
-            reranker,
-            top_k=FINAL_K
-        )
-
-        # -------------------------
-        # Final Evidence
-        # -------------------------
-
-        evidence = []
-
-        for result in reranked_results:
-
-            evidence.append({
-                "document_id": result["document_id"],
-                "chunk_id": result["chunk_id"],
-                "rank": result["rank"],
-                "score": result.get(
-                    "reranker_score",
-                    result.get("rrf_score", 0.0)
-                ),
-                "document_title": result["document_title"],
-                "page_number": get_evidence_page_number(
-                    result["page_number"]
-                ),
-                "section": result["section"],
-                "content": result["content"],
-                "content_type": result["content_type"],
-                "table_id": result["table_id"],
-                "bounding_box": result["bounding_box"]
-            })
-
-        # -------------------------
-        # Latency
-        # -------------------------
-
-        latency = time.perf_counter() - start_time
-
-        return {
-            "trace_id": request.trace_id,
-            "latency": latency,
-            "evidence": evidence
-        }
-
-    except Exception as e:
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
-
