@@ -1,108 +1,122 @@
 
-# ============================================================
-# Hybrid Retrieval using Reciprocal Rank Fusion (RRF)
-# ============================================================
+class HybridRetriever:
 
+    def __init__(
+        self,
+        vector_store,
+        bm25_retriever,
+        rrf_k: int = 60,
+    ):
 
-def reciprocal_rank_fusion(
-    result_lists,
-    top_k=5,
-    rrf_k=60
-):
-    """
-    Combine ranked results from multiple retrieval methods
-    using Reciprocal Rank Fusion (RRF).
+        self.vector_store = vector_store
+        self.bm25_retriever = bm25_retriever
+        self.rrf_k = rrf_k
 
-    RRF formula:
+    def reciprocal_rank_fusion(
+        self,
+        dense_results,
+        bm25_results,
+        top_k=30,
+    ):
 
-        RRF(d) = sum(1 / (rrf_k + rank))
+        rrf_scores = {}
+        chunk_lookup = {}
 
-    Parameters
-    ----------
-    result_lists : list[list[dict]]
-        Ranked results from different retrieval methods.
+        # -----------------------------
+        # Dense contribution
+        # -----------------------------
 
-    top_k : int
-        Number of final fused results.
+        for result in dense_results:
 
-    rrf_k : int
-        RRF constant. 60 is a common default.
-
-    Returns
-    -------
-    list[dict]
-        Combined and reranked evidence.
-    """
-
-    if not result_lists:
-        return []
-
-    if top_k <= 0:
-        return []
-
-    rrf_scores = {}
-    result_lookup = {}
-
-    # --------------------------------------------------------
-    # Process every retrieval result list
-    # --------------------------------------------------------
-
-    for results in result_lists:
-
-        if not results:
-            continue
-
-        for rank, result in enumerate(results, start=1):
-
-            chunk_id = result.get("chunk_id")
-
-            if not chunk_id:
-                continue
-
-            # RRF contribution from this retrieval method
-            contribution = 1.0 / (
-                rrf_k + rank
-            )
+            chunk_id = result["chunk_id"]
 
             rrf_scores[chunk_id] = (
                 rrf_scores.get(chunk_id, 0.0)
-                + contribution
+                + 1.0 / (
+                    self.rrf_k
+                    + result["rank"]
+                )
             )
 
-            # Keep the original chunk/evidence metadata
-            result_lookup[chunk_id] = result
+            chunk_lookup[chunk_id] = (
+                result["chunk"]
+            )
 
-    if not rrf_scores:
-        return []
+        # -----------------------------
+        # BM25 contribution
+        # -----------------------------
 
-    # --------------------------------------------------------
-    # Sort by fused RRF score
-    # --------------------------------------------------------
+        for result in bm25_results:
 
-    ranked_chunks = sorted(
-        rrf_scores.items(),
-        key=lambda item: item[1],
-        reverse=True
-    )
+            chunk_id = result["chunk_id"]
 
-    # --------------------------------------------------------
-    # Build final results
-    # --------------------------------------------------------
+            rrf_scores[chunk_id] = (
+                rrf_scores.get(chunk_id, 0.0)
+                + 1.0 / (
+                    self.rrf_k
+                    + result["rank"]
+                )
+            )
 
-    final_results = []
+            chunk_lookup[chunk_id] = (
+                result["chunk"]
+            )
 
-    for rank, (chunk_id, rrf_score) in enumerate(
-        ranked_chunks[:top_k],
-        start=1
-    ):
+        # -----------------------------
+        # Sort by RRF score
+        # -----------------------------
 
-        result = result_lookup[chunk_id].copy()
-
-        result["rank"] = rank
-        result["rrf_score"] = float(
-            rrf_score
+        ranked = sorted(
+            rrf_scores.items(),
+            key=lambda x: x[1],
+            reverse=True,
         )
 
-        final_results.append(result)
+        results = []
 
-    return final_results
+        for rank, (
+            chunk_id,
+            score,
+        ) in enumerate(
+            ranked[:top_k],
+            start=1,
+        ):
+
+            results.append({
+                "chunk_id": chunk_id,
+                "rank": rank,
+                "rrf_score": float(score),
+                "chunk": chunk_lookup[chunk_id],
+            })
+
+        return results
+
+    def search(
+        self,
+        query: str,
+        retrieval_k: int = 200,
+        final_k: int = 30,
+    ):
+
+        # Dense Top 200
+        dense_results = (
+            self.vector_store.search(
+                query,
+                top_k=retrieval_k,
+            )
+        )
+
+        # BM25 Top 200
+        bm25_results = (
+            self.bm25_retriever.search(
+                query,
+                top_k=retrieval_k,
+            )
+        )
+
+        # RRF → Top 30
+        return self.reciprocal_rank_fusion(
+            dense_results,
+            bm25_results,
+            top_k=final_k,
+        )
