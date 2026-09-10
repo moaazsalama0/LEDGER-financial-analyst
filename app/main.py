@@ -1,4 +1,3 @@
-%%writefile /content/retrieval-api/app/main.py
 
 from typing import List, Optional, Any
 import time
