@@ -1,5 +1,6 @@
 from typing import List, Optional, Any
 import time
+from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
@@ -41,10 +42,6 @@ def normalize_document(doc):
 
     # --------------------------------------------------------
     # Document title
-    # --------------------------------------------------------
-    # The Document Processor contract does not explicitly
-    # provide document_title, so use filename/document_id
-    # as a fallback.
     # --------------------------------------------------------
 
     if not normalized.get("document_title"):
@@ -251,6 +248,8 @@ class DocumentInput(BaseModel):
 
     document_title: Optional[str] = None
 
+    filename: Optional[str] = None
+
     pages: List[OCRPage]
 
     sections: List[Any] = []
@@ -310,6 +309,34 @@ class SearchResponse(BaseModel):
     latency_ms: float
 
     evidence: List[RetrievedEvidence]
+
+
+# ============================================================
+# Documents Response Models
+# ============================================================
+
+class DocumentSummary(BaseModel):
+
+    document_id: str
+
+    document_title: Optional[str] = None
+
+    filename: Optional[str] = None
+
+    page_count: int
+
+    table_count: int
+
+    tables: List[Any] = []
+
+    indexed_at: str
+
+
+class DocumentsResponse(BaseModel):
+
+    count: int
+
+    documents: List[DocumentSummary]
 
 
 # ============================================================
@@ -405,6 +432,11 @@ def ingest(request: IngestRequest):
         document_id = document.get(
             "document_id"
         )
+
+        # Store indexing timestamp for the document.
+        document["indexed_at"] = datetime.now(
+            timezone.utc
+        ).isoformat()
 
         DOCUMENTS[document_id] = document
 
@@ -516,6 +548,68 @@ def ingest(request: IngestRequest):
                 ]
             },
     }
+
+
+# ============================================================
+# GET /documents
+# ============================================================
+
+@app.get(
+    "/documents",
+    response_model=DocumentsResponse
+)
+def get_documents():
+
+    documents = []
+
+    for document in DOCUMENTS.values():
+
+        pages = document.get(
+            "pages",
+            []
+        )
+
+        tables = document.get(
+            "tables",
+            []
+        )
+
+        documents.append(
+            DocumentSummary(
+
+                document_id=document.get(
+                    "document_id"
+                ),
+
+                document_title=document.get(
+                    "document_title"
+                ),
+
+                filename=document.get(
+                    "filename",
+                    document.get(
+                        "document_title"
+                    )
+                ),
+
+                page_count=len(pages),
+
+                table_count=len(tables),
+
+                tables=tables,
+
+                indexed_at=document.get(
+                    "indexed_at"
+                ),
+            )
+        )
+
+    return DocumentsResponse(
+
+        count=len(documents),
+
+        documents=documents,
+    )
 
 
 # ============================================================
