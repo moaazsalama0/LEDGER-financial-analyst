@@ -1,10 +1,8 @@
-
 from typing import List, Optional, Any
 import time
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
-
 
 from .chunking import build_retrieval_corpus
 from .embeddings import EmbeddingModel
@@ -15,7 +13,7 @@ from .reranker import Reranker
 
 
 # ============================================================
-# APP
+# FastAPI App
 # ============================================================
 
 app = FastAPI(
@@ -25,31 +23,31 @@ app = FastAPI(
 
 
 # ============================================================
-# NORMALIZATION
+# Document Normalization
 # ============================================================
 
 def normalize_document(doc):
     """
-    Convert raw OCR document schema into the schema expected
-    by the Retrieval pipeline.
+    Normalize a document received from the Document Processor
+    into the structure expected by the Retrieval pipeline.
     """
 
-    # Preserve the complete original OCR document
     normalized = dict(doc)
-
-    # --------------------------------------------------------
-    # Document-level fields
-    # --------------------------------------------------------
 
     normalized.setdefault("sections", [])
     normalized.setdefault("pages", [])
     normalized.setdefault("tables", [])
     normalized.setdefault("processing", {})
 
-    # OCR uses filename.
-    # Retrieval uses document_title.
-    if not normalized.get("document_title"):
+    # --------------------------------------------------------
+    # Document title
+    # --------------------------------------------------------
+    # The Document Processor contract does not explicitly
+    # provide document_title, so use filename/document_id
+    # as a fallback.
+    # --------------------------------------------------------
 
+    if not normalized.get("document_title"):
         normalized["document_title"] = normalized.get(
             "filename",
             normalized.get(
@@ -58,15 +56,14 @@ def normalize_document(doc):
             )
         )
 
-    # --------------------------------------------------------
-    # Pages
-    # --------------------------------------------------------
-
     normalized_pages = []
+
+    # ========================================================
+    # Normalize Pages
+    # ========================================================
 
     for page in normalized["pages"]:
 
-        # Preserve all original page fields
         page_copy = dict(page)
 
         page_copy.setdefault(
@@ -81,17 +78,16 @@ def normalize_document(doc):
 
         normalized_blocks = []
 
-        # ----------------------------------------------------
-        # Blocks
-        # ----------------------------------------------------
+        # ====================================================
+        # Normalize Blocks
+        # ====================================================
 
         for block in page_copy["blocks"]:
 
-            # Preserve all original OCR fields
             block_copy = dict(block)
 
             # ------------------------------------------------
-            # Original OCR metadata
+            # Basic metadata
             # ------------------------------------------------
 
             block_copy.setdefault(
@@ -125,42 +121,39 @@ def normalize_document(doc):
             )
 
             # ------------------------------------------------
-            # text -> content
+            # Processor: text
+            # Retrieval: content
             # ------------------------------------------------
 
             if not block_copy.get("content"):
-
                 block_copy["content"] = block_copy.get(
                     "text",
                     ""
                 )
 
             # ------------------------------------------------
-            # bbox -> bounding_box
+            # Processor: bbox
+            # Retrieval: bounding_box
             # ------------------------------------------------
 
             if not block_copy.get("bounding_box"):
-
                 block_copy["bounding_box"] = block_copy.get(
                     "bbox"
                 )
 
             # ------------------------------------------------
-            # type -> content_type
+            # Content type
             # ------------------------------------------------
 
             if not block_copy.get("content_type"):
 
                 if block_copy.get("type") == "table":
-
                     block_copy["content_type"] = "table"
-
                 else:
-
                     block_copy["content_type"] = "text"
 
             # ------------------------------------------------
-            # Section
+            # Resolve section title
             # ------------------------------------------------
 
             if not block_copy.get("section"):
@@ -215,12 +208,11 @@ def normalize_document(doc):
 
 
 # ============================================================
-# INGESTION CONTRACT
+# Pydantic Models
 # ============================================================
 
 class OCRBlock(BaseModel):
 
-    # Original OCR metadata
     block_id: Optional[str] = None
 
     page_number: Optional[int] = None
@@ -233,7 +225,6 @@ class OCRBlock(BaseModel):
 
     order_index: Optional[int] = None
 
-    # Retrieval fields
     section: Optional[str] = None
 
     content: str = ""
@@ -254,16 +245,14 @@ class OCRPage(BaseModel):
     reading_order: List[Any] = []
 
 
-class IngestRequest(BaseModel):
+class DocumentInput(BaseModel):
 
     document_id: str
 
-    document_title: str
+    document_title: Optional[str] = None
 
     pages: List[OCRPage]
 
-    # Document-level fields required by the
-    # retrieval chunking pipeline.
     sections: List[Any] = []
 
     tables: List[Any] = []
@@ -271,9 +260,10 @@ class IngestRequest(BaseModel):
     processing: dict = {}
 
 
-# ============================================================
-# SEARCH CONTRACT
-# ============================================================
+class IngestRequest(BaseModel):
+
+    documents: List[DocumentInput]
+
 
 class SearchRequest(BaseModel):
 
@@ -284,13 +274,9 @@ class SearchRequest(BaseModel):
     top_k: int = Field(
         default=5,
         ge=1,
-        le=30,
+        le=30
     )
 
-
-# ============================================================
-# RETRIEVED EVIDENCE CONTRACT
-# ============================================================
 
 class RetrievedEvidence(BaseModel):
 
@@ -327,7 +313,7 @@ class SearchResponse(BaseModel):
 
 
 # ============================================================
-# RETRIEVAL COMPONENTS
+# Retrieval Components
 # ============================================================
 
 embedding_model = EmbeddingModel()
@@ -348,199 +334,201 @@ reranker = Reranker()
 
 
 # ============================================================
-# INTERNAL STATE
+# Retrieval State
 # ============================================================
 
-DOCUMENTS = []
+# All currently ingested documents.
+#
+# Example:
+#
+# DOCUMENTS = {
+#     "doc_001": {...},
+#     "doc_002": {...},
+#     "doc_003": {...}
+# }
+
+DOCUMENTS = {}
+
+# Combined chunks from all ingested documents.
 
 RETRIEVAL_CORPUS = []
 
 
 # ============================================================
-# DOCUMENT INGESTION
+# POST /ingest
 # ============================================================
 
 @app.post("/ingest")
-def ingest(raw_document: dict):
+def ingest(request: IngestRequest):
 
     global DOCUMENTS
     global RETRIEVAL_CORPUS
 
-    # --------------------------------------------------------
-    # Step 1: Normalize OCR output
-    # --------------------------------------------------------
+    # ========================================================
+    # 1. Normalize and validate all incoming documents
+    # ========================================================
 
-    normalized_document = normalize_document(
-        raw_document
-    )
+    incoming_documents = []
 
-    # --------------------------------------------------------
-    # Step 2: Validate retrieval document
-    # --------------------------------------------------------
+    for raw_document in request.documents:
 
-    request = IngestRequest.model_validate(
-        normalized_document
-    )
+        # Convert Pydantic object back to a dictionary
+        # containing the Processor-compatible structure.
 
-    # --------------------------------------------------------
-    # Step 3: Keep the ORIGINAL normalized document
+        raw_dict = raw_document.model_dump()
+
+        normalized_document = normalize_document(
+            raw_dict
+        )
+
+        # Validate normalized document again.
+
+        validated_document = DocumentInput.model_validate(
+            normalized_document
+        )
+
+        incoming_documents.append(
+            normalized_document
+        )
+
+    # ========================================================
+    # 2. Add / Update all documents
+    # ========================================================
+
+    # Documents already stored remain available.
     #
-    # We validate the document with Pydantic, but we do NOT
-    # use request.model_dump() here.
-    #
-    # This preserves all OCR fields that may be required by
-    # the chunking pipeline.
-    # --------------------------------------------------------
+    # If the same document_id is received again,
+    # that document is updated/replaced.
 
-    document = normalized_document
+    for document in incoming_documents:
 
-    # --------------------------------------------------------
-    # Store document
-    # --------------------------------------------------------
-
-    DOCUMENTS = [document]
-
-    # --------------------------------------------------------
-    # Step 4: Build retrieval corpus
-    # --------------------------------------------------------
-
-    RETRIEVAL_CORPUS = build_retrieval_corpus(
-        document
-    )
-
-    # --------------------------------------------------------
-    # DEBUG
-    # --------------------------------------------------------
-
-    print("\n========== INGEST DEBUG ==========")
-
-    print(
-        "Document ID:",
-        document.get("document_id")
-    )
-
-    print(
-        "Document title:",
-        document.get("document_title")
-    )
-
-    print(
-        "Pages:",
-        len(
-            document.get(
-                "pages",
-                []
-            )
-        )
-    )
-
-    print(
-        "Blocks:",
-        sum(
-            len(
-                page.get(
-                    "blocks",
-                    []
-                )
-            )
-            for page in document.get(
-                "pages",
-                []
-            )
-        )
-    )
-
-    print(
-        "Sections:",
-        len(
-            document.get(
-                "sections",
-                []
-            )
-        )
-    )
-
-    print(
-        "Tables:",
-        len(
-            document.get(
-                "tables",
-                []
-            )
-        )
-    )
-
-    print(
-        "Chunks generated:",
-        len(RETRIEVAL_CORPUS)
-    )
-
-    if RETRIEVAL_CORPUS:
-
-        print(
-            "First chunk:"
+        document_id = document.get(
+            "document_id"
         )
 
-        print(
-            RETRIEVAL_CORPUS[0]
+        DOCUMENTS[document_id] = document
+
+    # ========================================================
+    # 3. Build the COMPLETE retrieval corpus
+    # ========================================================
+
+    RETRIEVAL_CORPUS = []
+
+    document_chunk_counts = {}
+
+    for document_id, stored_document in DOCUMENTS.items():
+
+        document_chunks = build_retrieval_corpus(
+            stored_document
         )
 
-    print("==================================\n")
+        RETRIEVAL_CORPUS.extend(
+            document_chunks
+        )
 
-    # --------------------------------------------------------
-    # Step 5: Dense index
-    # --------------------------------------------------------
+        document_chunk_counts[document_id] = len(
+            document_chunks
+        )
+
+    # ========================================================
+    # 4. Build Dense Vector Index ONCE
+    # ========================================================
 
     vector_store.build(
         RETRIEVAL_CORPUS
     )
 
-    # --------------------------------------------------------
-    # Step 6: BM25 index
-    # --------------------------------------------------------
+    # ========================================================
+    # 5. Build BM25 Index ONCE
+    # ========================================================
 
     bm25_retriever.build(
         RETRIEVAL_CORPUS
     )
 
-    # --------------------------------------------------------
-    # Response
-    # --------------------------------------------------------
+    # ========================================================
+    # 6. Debug Information
+    # ========================================================
+
+    print(
+        "\n========== INGEST DEBUG =========="
+    )
+
+    print(
+        "Documents received in request:",
+        len(incoming_documents)
+    )
+
+    print(
+        "Documents stored:",
+        len(DOCUMENTS)
+    )
+
+    print(
+        "Total chunks:",
+        len(RETRIEVAL_CORPUS)
+    )
+
+    for document in incoming_documents:
+
+        document_id = document.get(
+            "document_id"
+        )
+
+        print(
+            f"Document {document_id}: "
+            f"{document_chunk_counts.get(document_id, 0)} chunks"
+        )
+
+    print(
+        "==================================\n"
+    )
+
+    # ========================================================
+    # 7. Response
+    # ========================================================
 
     return {
-        "status": "success",
 
-        "document_id": request.document_id,
+        "status":
+            "success",
 
-        "document_title": request.document_title,
+        "documents_received":
+            len(incoming_documents),
 
-        "chunks_indexed": len(
-            RETRIEVAL_CORPUS
-        ),
+        "documents_stored":
+            len(DOCUMENTS),
+
+        "chunks_indexed":
+            len(RETRIEVAL_CORPUS),
+
+        "document_chunk_counts":
+            {
+                document_id:
+                    document_chunk_counts.get(
+                        document_id,
+                        0
+                    )
+
+                for document_id in [
+                    document.get("document_id")
+                    for document in incoming_documents
+                ]
+            },
     }
 
 
 # ============================================================
-# SEMANTIC EVIDENCE SEARCH
+# POST /search
 # ============================================================
 
 @app.post(
     "/search",
-    response_model=SearchResponse,
+    response_model=SearchResponse
 )
-def search(
-    request: SearchRequest
-):
-
-    # --------------------------------------------------------
-    # Start latency measurement
-    # --------------------------------------------------------
+def search(request: SearchRequest):
 
     start_time = time.perf_counter()
-
-    # --------------------------------------------------------
-    # Request parameters
-    # --------------------------------------------------------
 
     trace_id = request.trace_id
 
@@ -548,29 +536,36 @@ def search(
 
     top_k = request.top_k
 
-    # --------------------------------------------------------
-    # Hybrid retrieval
-    # --------------------------------------------------------
+    # ========================================================
+    # 1. Hybrid Retrieval
+    # Dense + BM25
+    # ========================================================
 
     rrf_results = hybrid_retriever.search(
+
         query=query,
+
         retrieval_k=30,
+
         final_k=30,
     )
 
-    # --------------------------------------------------------
-    # Reranking
-    # --------------------------------------------------------
+    # ========================================================
+    # 2. Reranking
+    # ========================================================
 
     reranked_results = reranker.rerank(
+
         query=query,
+
         candidates=rrf_results,
+
         top_k=top_k,
     )
 
-    # --------------------------------------------------------
-    # Build evidence
-    # --------------------------------------------------------
+    # ========================================================
+    # 3. Build Retrieved Evidence
+    # ========================================================
 
     evidence = []
 
@@ -579,94 +574,101 @@ def search(
         chunk = result["chunk"]
 
         evidence.append(
+
             RetrievedEvidence(
 
-                document_id=chunk[
-                    "document_id"
-                ],
+                document_id=
+                    chunk["document_id"],
 
-                chunk_id=result[
-                    "chunk_id"
-                ],
+                chunk_id=
+                    result["chunk_id"],
 
-                rank=result[
-                    "rank"
-                ],
+                rank=
+                    result["rank"],
 
-                score=result[
-                    "reranker_score"
-                ],
+                score=
+                    result["reranker_score"],
 
-                document_title=chunk.get(
-                    "document_title"
-                ),
+                document_title=
+                    chunk.get(
+                        "document_title"
+                    ),
 
-                page_number=chunk.get(
-                    "page_number"
-                ),
+                page_number=
+                    chunk.get(
+                        "page_number"
+                    ),
 
-                section=chunk.get(
-                    "section"
-                ),
+                section=
+                    chunk.get(
+                        "section"
+                    ),
 
-                content=chunk[
-                    "content"
-                ],
+                content=
+                    chunk["content"],
 
-                content_type=chunk.get(
-                    "content_type",
-                    "text",
-                ),
+                content_type=
+                    chunk.get(
+                        "content_type",
+                        "text"
+                    ),
 
-                table_id=chunk.get(
-                    "table_id"
-                ),
+                table_id=
+                    chunk.get(
+                        "table_id"
+                    ),
 
-                bounding_box=chunk.get(
-                    "bounding_box"
-                ),
+                bounding_box=
+                    chunk.get(
+                        "bounding_box"
+                    ),
             )
         )
 
-    # --------------------------------------------------------
-    # Latency
-    # --------------------------------------------------------
+    # ========================================================
+    # 4. Calculate Latency
+    # ========================================================
 
     latency_ms = (
-        time.perf_counter() - start_time
+        time.perf_counter()
+        - start_time
     ) * 1000
 
-    # --------------------------------------------------------
-    # Response
-    # --------------------------------------------------------
+    # ========================================================
+    # 5. Return Search Response
+    # ========================================================
 
     return {
-        "trace_id": trace_id,
 
-        "latency_ms": round(
-            latency_ms,
-            2
-        ),
+        "trace_id":
+            trace_id,
 
-        "evidence": evidence,
+        "latency_ms":
+            round(
+                latency_ms,
+                2
+            ),
+
+        "evidence":
+            evidence,
     }
 
 
 # ============================================================
-# HEALTH CHECK
+# GET /health
 # ============================================================
 
 @app.get("/health")
 def health():
 
     return {
-        "status": "ok",
 
-        "documents": len(
-            DOCUMENTS
-        ),
+        "status":
+            "ok",
 
-        "chunks": len(
-            RETRIEVAL_CORPUS
-        ),
+        "documents":
+            len(DOCUMENTS),
+
+        "chunks":
+            len(RETRIEVAL_CORPUS),
     }
