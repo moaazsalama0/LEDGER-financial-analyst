@@ -1,0 +1,34 @@
+# --- Virtual environment -----------------------------------------------
+.venv/
+venv/
+
+# --- Environment / secrets ----------------------------------------------
+.env
+
+# --- Python ---------------------------------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.Python
+build/
+dist/
+
+# --- Gradio ----------------------------------------------------------------
+# Gradio writes temp uploads/flagged samples here by default.
+flagged/
+gradio_cached_examples/
+.gradio/
+
+# --- Testing / tooling -----------------------------------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# --- Editors / OS ------------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

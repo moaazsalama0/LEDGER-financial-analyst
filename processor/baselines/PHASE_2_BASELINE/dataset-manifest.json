@@ -1,0 +1,15 @@
+{
+  "source": "https://huggingface.co/datasets/next-tat/TAT-DQA",
+  "licence": "cc-by-4.0",
+  "splits": {
+    "dev": {
+      "gold_file": "tatdqa_dataset_dev.json",
+      "gold_sha256": "07395642f317754ed22bd8330525af7c1e15b7189efdf046cd0a257fc3178fcb",
+      "archive_sha256": "0e463045f3f89dcfd0e7238480fc931bd5f301883d9a022d4bd54d3f9c3ee080",
+      "documents": 274,
+      "questions": 1644,
+      "pdfs": 274,
+      "missing_pdfs": 0
+    }
+  }
+}

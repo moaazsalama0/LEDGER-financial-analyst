@@ -1,0 +1,94 @@
+{
+  "meta": {
+    "backend": "docling",
+    "backend_version": "docling 2.125.0 / docling-ibm-models 4.0.2",
+    "model_versions": {
+      "layout": "docling-project/docling-layout-heron@main",
+      "table": "tableformer-accurate",
+      "ocr": "auto"
+    },
+    "split": "dev",
+    "seed": 0,
+    "limit": null,
+    "documents": 274,
+    "force_ocr": false,
+    "gold_sha256": "",
+    "schema_version": 1,
+    "started_at": "2026-09-04T01:40:18+00:00"
+  },
+  "documents": {
+    "total": 274,
+    "ok": 274,
+    "failed": 0,
+    "from_cache": 5
+  },
+  "quality": {
+    "fact_recall": 87.98,
+    "question_support": 85.28,
+    "unique_match_rate": 84.48,
+    "table_fact_share": 81.07,
+    "scale_accuracy": 51.81,
+    "scale_scorable": 855,
+    "facts": 2804,
+    "facts_found": 2467,
+    "questions": 1644,
+    "questions_supported": 1402
+  },
+  "by_answer_type": {
+    "span": {
+      "questions": 690,
+      "question_support": 86.38,
+      "fact_recall": 86.38
+    },
+    "multi-span": {
+      "questions": 216,
+      "question_support": 91.2,
+      "fact_recall": 92.18
+    },
+    "arithmetic": {
+      "questions": 706,
+      "question_support": 82.72,
+      "fact_recall": 88.15
+    },
+    "count": {
+      "questions": 32,
+      "question_support": 78.12,
+      "fact_recall": 71.25
+    }
+  },
+  "outcomes": {
+    "block_text": 339,
+    "table_cell_text": 1250,
+    "block_text_value": 128,
+    "table_cell_value": 750,
+    "not_found": 337
+  },
+  "scale_verdicts": {
+    "unscorable": 789,
+    "correct": 443,
+    "missed": 289,
+    "spurious": 76,
+    "wrong": 47
+  },
+  "structure": {
+    "pages": 307,
+    "blocks": 3700,
+    "furniture": 20,
+    "sections": 808,
+    "tables": 573,
+    "cells": 16699,
+    "parsed_nums": 9193,
+    "scaled_tables": 214,
+    "extraction_sources": {
+      "text_layer": 307
+    },
+    "warnings": {
+      "NO_HEADINGS_DETECTED": 21
+    }
+  },
+  "performance": {
+    "seconds_per_document": 37.385,
+    "seconds_per_page": 32.758
+  },
+  "failures": []
+}

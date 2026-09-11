@@ -1,0 +1,2 @@
+-r requirements-light.txt
+openai>=1.40.0

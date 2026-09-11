@@ -1,0 +1,2 @@
+# The validator implementation currently lives in the nested service folder.
+-r answer-validator-api/requirements.txt

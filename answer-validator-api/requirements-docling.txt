@@ -1,0 +1,33 @@
+# The deep-learning backend, kept out of requirements.txt on purpose.
+#
+# This pulls torch, transformers, and the DocLayNet and TableFormer weights —
+# gigabytes, and minutes of install. The base requirements stay small so the
+# contract package and the fast test suite install and run in seconds on a
+# machine with no GPU. Serving needs these: docling is the production
+# document-processing path and the only backend the service registers.
+#
+#     pip install -r requirements-docling.txt
+#     uvicorn app.main:app --port 8008
+#
+# ---------------------------------------------------------------------------
+# READ THIS BEFORE RUNNING THE CORPUS
+#
+# On Windows, plain `pip install docling` resolves torch to the **CPU-only**
+# wheel (`2.14.0+cpu`). It works, and it is slow enough to change the plan:
+# TableFormer in accurate mode is minutes per document on CPU, which over
+# 2,758 TAT-DQA documents is days rather than hours.
+#
+# Check what you actually got:
+#
+#     python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+#
+# If it prints `+cpu` and `False` and the machine has an NVIDIA card, install
+# the CUDA build explicitly — pip will not choose it for you:
+#
+#     pip install --force-reinstall torch torchvision \
+#         --index-url https://download.pytorch.org/whl/cu124
+#
+# Then re-check. The backend needs no code change: docling's accelerator
+# device is `auto` and picks up CUDA once torch can see it.
+# ---------------------------------------------------------------------------
+docling>=2.30

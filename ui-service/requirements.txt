@@ -1,0 +1,6 @@
+gradio>=5.0,<6
+httpx>=0.27
+pydantic-settings>=2.4
+pandas>=2.0
+pymupdf>=1.24
+pillow>=10.0

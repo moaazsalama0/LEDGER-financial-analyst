@@ -1,0 +1,878 @@
+{
+  "$defs": {
+    "BBox": {
+      "additionalProperties": false,
+      "description": "Axis-aligned box in PDF points, top-left origin, y increasing downward.",
+      "properties": {
+        "x0": {
+          "description": "Left edge, PDF points from the page's left.",
+          "title": "X0",
+          "type": "number"
+        },
+        "x1": {
+          "description": "Right edge. Always >= x0.",
+          "title": "X1",
+          "type": "number"
+        },
+        "y0": {
+          "description": "Top edge, PDF points from the page's top.",
+          "title": "Y0",
+          "type": "number"
+        },
+        "y1": {
+          "description": "Bottom edge. Always >= y0.",
+          "title": "Y1",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x0",
+        "y0",
+        "x1",
+        "y1"
+      ],
+      "title": "BBox",
+      "type": "object"
+    },
+    "Block": {
+      "additionalProperties": false,
+      "description": "One layout region on a page \u2014 the unit a retrieval chunk is built from.\n\nCarries ``page_number``, ``section_id``, and ``type`` so a chunk built\nfrom it satisfies the brief's requirement that every chunk preserve\ndocument_id / page / section / content_type metadata.",
+      "properties": {
+        "bbox": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BBox"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "block_id": {
+          "description": "Stable id, ``p{page:04d}_b{index:03d}``.",
+          "title": "Block Id",
+          "type": "string"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "heading_level": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Set only on heading blocks. Level 1 is the outermost.",
+          "title": "Heading Level"
+        },
+        "order_index": {
+          "description": "Position within the page's reading order.",
+          "minimum": 0,
+          "title": "Order Index",
+          "type": "integer"
+        },
+        "page_number": {
+          "minimum": 1,
+          "title": "Page Number",
+          "type": "integer"
+        },
+        "section_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Section this block sits in; None if it precedes any heading.",
+          "title": "Section Id"
+        },
+        "table_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Set only when ``type`` is 'table'.",
+          "title": "Table Id"
+        },
+        "text": {
+          "default": "",
+          "title": "Text",
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/BlockType"
+        }
+      },
+      "required": [
+        "block_id",
+        "page_number",
+        "type",
+        "order_index"
+      ],
+      "title": "Block",
+      "type": "object"
+    },
+    "BlockType": {
+      "description": "What a layout block is, aligned with the DocLayNet label set.\n\n``retrieval-api`` uses this as the ``content_type`` metadata field the\nproject brief requires on every chunk.",
+      "enum": [
+        "title",
+        "section_header",
+        "text",
+        "list_item",
+        "table",
+        "caption",
+        "footnote",
+        "figure",
+        "formula",
+        "page_header",
+        "page_footer"
+      ],
+      "title": "BlockType",
+      "type": "string"
+    },
+    "Cell": {
+      "additionalProperties": false,
+      "description": "One cell of a recognised table.",
+      "properties": {
+        "bbox": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BBox"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "cell_id": {
+          "description": "Stable id, ``{table_id}_r{row}_c{col}``.",
+          "title": "Cell Id",
+          "type": "string"
+        },
+        "col": {
+          "description": "0-based column index.",
+          "minimum": 0,
+          "title": "Col",
+          "type": "integer"
+        },
+        "col_span": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Col Span",
+          "type": "integer"
+        },
+        "is_header": {
+          "default": false,
+          "title": "Is Header",
+          "type": "boolean"
+        },
+        "row": {
+          "description": "0-based row index in the reconstructed grid.",
+          "minimum": 0,
+          "title": "Row",
+          "type": "integer"
+        },
+        "row_span": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Row Span",
+          "type": "integer"
+        },
+        "text": {
+          "description": "Raw cell text exactly as printed. Never normalised.",
+          "title": "Text",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NumericValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Parsed figure, or None when the cell is not numeric."
+        }
+      },
+      "required": [
+        "cell_id",
+        "row",
+        "col",
+        "text"
+      ],
+      "title": "Cell",
+      "type": "object"
+    },
+    "ExtractionSource": {
+      "description": "How the text on a page was obtained.\n\nKept explicit rather than inferred from a confidence sentinel: a\ntext-layer page is *not measured*, which is a different thing from being\nmeasured at 1.0.",
+      "enum": [
+        "text_layer",
+        "ocr",
+        "hybrid",
+        "failed"
+      ],
+      "title": "ExtractionSource",
+      "type": "string"
+    },
+    "NegativeStyle": {
+      "description": "How a negative number was written on the page.\n\n``PARENTHESES`` is the one that matters: financial statements write\n``(1,234)`` for -1234, and a parser that misses it produces an answer\nwith the wrong sign.",
+      "enum": [
+        "parentheses",
+        "minus"
+      ],
+      "title": "NegativeStyle",
+      "type": "string"
+    },
+    "NumericUnit": {
+      "description": "What kind of quantity a parsed cell value represents.",
+      "enum": [
+        "currency",
+        "percent",
+        "count",
+        "ratio"
+      ],
+      "title": "NumericUnit",
+      "type": "string"
+    },
+    "NumericValue": {
+      "additionalProperties": false,
+      "description": "A financial figure parsed out of a table cell.\n\nPurely additive: the cell's raw ``text`` is always preserved beside this,\nso a consumer that disagrees with the parse can redo it. The whole object\nis ``None`` for any cell whose text is not a number.",
+      "properties": {
+        "currency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ISO 4217 code inferred from the symbol, e.g. 'USD'.",
+          "title": "Currency"
+        },
+        "footnote_refs": {
+          "default": [],
+          "description": "Markers stripped from the cell, e.g. ('1',) for '1,234 (1)'.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Footnote Refs",
+          "type": "array"
+        },
+        "is_dash": {
+          "default": false,
+          "description": "True when the cell held a dash, em-dash, or N/A. Means nil or not applicable, and is deliberately NOT coerced to 0.0 \u2014 summing a dash as zero silently changes the answer.",
+          "title": "Is Dash",
+          "type": "boolean"
+        },
+        "is_negative": {
+          "default": false,
+          "title": "Is Negative",
+          "type": "boolean"
+        },
+        "negative_style": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NegativeStyle"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How the sign was written. Parentheses is the finance convention."
+        },
+        "num": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The number as printed, sign applied, separators and currency symbols removed. None when the cell is a dash or placeholder.",
+          "title": "Num"
+        },
+        "scaled": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "``num`` multiplied by the table's scale factor. In a table captioned 'in millions', a printed 1,234 yields 1234000000.0. Equal to ``num`` when no scale is declared.",
+          "title": "Scaled"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NumericUnit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "NumericValue",
+      "type": "object"
+    },
+    "Page": {
+      "additionalProperties": false,
+      "description": "One page of the source PDF.",
+      "properties": {
+        "blocks": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Block"
+          },
+          "title": "Blocks",
+          "type": "array"
+        },
+        "extraction_source": {
+          "$ref": "#/$defs/ExtractionSource"
+        },
+        "height": {
+          "description": "Page height in PDF points.",
+          "exclusiveMinimum": 0,
+          "title": "Height",
+          "type": "number"
+        },
+        "low_confidence": {
+          "default": false,
+          "description": "OCR confidence fell below the service's review threshold.",
+          "title": "Low Confidence",
+          "type": "boolean"
+        },
+        "ocr_confidence": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "None on text-layer pages \u2014 not measured, rather than perfect.",
+          "title": "Ocr Confidence"
+        },
+        "page_number": {
+          "description": "1-based, matching what a reader sees.",
+          "minimum": 1,
+          "title": "Page Number",
+          "type": "integer"
+        },
+        "reading_order": {
+          "default": [],
+          "description": "Block ids in reading order, with page furniture excluded.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Reading Order",
+          "type": "array"
+        },
+        "rotation": {
+          "default": 0,
+          "description": "Page rotation in degrees: 0, 90, 180, 270.",
+          "title": "Rotation",
+          "type": "integer"
+        },
+        "width": {
+          "description": "Page width in PDF points.",
+          "exclusiveMinimum": 0,
+          "title": "Width",
+          "type": "number"
+        }
+      },
+      "required": [
+        "page_number",
+        "width",
+        "height",
+        "extraction_source"
+      ],
+      "title": "Page",
+      "type": "object"
+    },
+    "ProcessingInfo": {
+      "additionalProperties": false,
+      "description": "Provenance for one processing run.\n\nDeliberately separate from the document body: this is the only part that\ndiffers between two runs over the same PDF, so a consumer hashing a\ndocument for change detection should exclude it.",
+      "properties": {
+        "backend": {
+          "title": "Backend",
+          "type": "string"
+        },
+        "backend_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Backend Version"
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "from_cache": {
+          "default": false,
+          "title": "From Cache",
+          "type": "boolean"
+        },
+        "model_versions": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Model Versions",
+          "type": "object"
+        },
+        "processed_at": {
+          "description": "UTC ISO-8601 timestamp.",
+          "title": "Processed At",
+          "type": "string"
+        },
+        "service_version": {
+          "title": "Service Version",
+          "type": "string"
+        },
+        "warnings": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ProcessingWarning"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "backend",
+        "service_version",
+        "processed_at",
+        "duration_ms"
+      ],
+      "title": "ProcessingInfo",
+      "type": "object"
+    },
+    "ProcessingWarning": {
+      "additionalProperties": false,
+      "description": "A non-fatal problem encountered while processing.",
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/WarningCode"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "page": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "ProcessingWarning",
+      "type": "object"
+    },
+    "Section": {
+      "additionalProperties": false,
+      "description": "A node in the document's heading hierarchy.\n\nEmitted as a flat list, with the tree expressed through\n``parent_section_id``. Flat is deliberate: it keeps the JSON easy to\niterate and avoids nesting a chunker would only have to flatten again.",
+      "properties": {
+        "heading_block_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Heading Block Id"
+        },
+        "level": {
+          "minimum": 1,
+          "title": "Level",
+          "type": "integer"
+        },
+        "page_end": {
+          "minimum": 1,
+          "title": "Page End",
+          "type": "integer"
+        },
+        "page_start": {
+          "minimum": 1,
+          "title": "Page Start",
+          "type": "integer"
+        },
+        "parent_section_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Section Id"
+        },
+        "path": {
+          "description": "Titles from the root down to and including this section. Joining with ' > ' gives the section string an answer citation needs.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Path",
+          "type": "array"
+        },
+        "section_id": {
+          "description": "Stable id, ``s{index:03d}``.",
+          "title": "Section Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "section_id",
+        "title",
+        "level",
+        "path",
+        "page_start",
+        "page_end"
+      ],
+      "title": "Section",
+      "type": "object"
+    },
+    "Table": {
+      "additionalProperties": false,
+      "description": "A table with its cell structure recovered.\n\nHoisted to the document level so table search can iterate tables without\nwalking every page, while the corresponding :class:`Block` on the page\ncarries the same ``table_id`` for callers reading in document order.",
+      "properties": {
+        "bbox": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BBox"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "block_id": {
+          "description": "The page block this table occupies.",
+          "title": "Block Id",
+          "type": "string"
+        },
+        "caption": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Caption"
+        },
+        "caption_bbox": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BBox"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "cells": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Cell"
+          },
+          "title": "Cells",
+          "type": "array"
+        },
+        "column_headers": {
+          "default": [],
+          "description": "Flattened header label per column, so a caller can resolve (row_label, column_label) to a cell without re-deriving the grid.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Column Headers",
+          "type": "array"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "header_cols": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Header Cols",
+          "type": "integer"
+        },
+        "header_rows": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Header Rows",
+          "type": "integer"
+        },
+        "markdown": {
+          "default": "",
+          "description": "GitHub-flavoured serialisation, intended as the embeddable text.",
+          "title": "Markdown",
+          "type": "string"
+        },
+        "n_cols": {
+          "minimum": 0,
+          "title": "N Cols",
+          "type": "integer"
+        },
+        "n_rows": {
+          "minimum": 0,
+          "title": "N Rows",
+          "type": "integer"
+        },
+        "page_number": {
+          "minimum": 1,
+          "title": "Page Number",
+          "type": "integer"
+        },
+        "row_headers": {
+          "default": [],
+          "description": "Flattened header label per body row.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Row Headers",
+          "type": "array"
+        },
+        "section_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section Id"
+        },
+        "table_id": {
+          "description": "Stable id, ``t{index:03d}``, unique per document.",
+          "title": "Table Id",
+          "type": "string"
+        },
+        "units": {
+          "$ref": "#/$defs/TableUnits"
+        }
+      },
+      "required": [
+        "table_id",
+        "block_id",
+        "page_number",
+        "n_rows",
+        "n_cols"
+      ],
+      "title": "Table",
+      "type": "object"
+    },
+    "TableUnits": {
+      "additionalProperties": false,
+      "description": "Scale and currency declared for a whole table.\n\nFinancial tables state their magnitude once, in the caption or a nearby\nline such as 'in millions, except per share data', then print bare\nnumbers. Losing that multiplier turns a correct extraction into a wrong\nanswer, so it is bound to the table here.",
+      "properties": {
+        "currency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ISO 4217 code, e.g. 'USD'.",
+          "title": "Currency"
+        },
+        "scale": {
+          "default": 1.0,
+          "description": "Multiplier, e.g. 1000000.0 for 'in millions'.",
+          "title": "Scale",
+          "type": "number"
+        },
+        "scale_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The caption phrase this was read from.",
+          "title": "Scale Label"
+        }
+      },
+      "title": "TableUnits",
+      "type": "object"
+    },
+    "WarningCode": {
+      "description": "Non-fatal conditions recorded in ``ProcessingInfo.warnings``.",
+      "enum": [
+        "SCANNED_PAGE_OCR_FALLBACK",
+        "PAGE_EXTRACTION_FAILED",
+        "LOW_OCR_CONFIDENCE",
+        "TABLE_STRUCTURE_UNCERTAIN",
+        "NO_HEADINGS_DETECTED"
+      ],
+      "title": "WarningCode",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The complete structured representation of one financial PDF.\n\nTwo access paths are supported on purpose:\n\n* walk ``pages[].blocks[]`` in ``reading_order`` for linear, section-aware\n  chunking;\n* iterate ``tables`` directly for table-specific search and lookup.\n\nTables appear in both, joined by ``table_id``.",
+  "properties": {
+    "content_sha256": {
+      "description": "SHA-256 of the source PDF bytes. Identifies the input exactly.",
+      "title": "Content Sha256",
+      "type": "string"
+    },
+    "contract_version": {
+      "default": "1.0",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "document_id": {
+      "pattern": "^[A-Za-z0-9_.-]{1,128}$",
+      "title": "Document Id",
+      "type": "string"
+    },
+    "filename": {
+      "title": "Filename",
+      "type": "string"
+    },
+    "language": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "BCP-47 tag, e.g. 'en'.",
+      "title": "Language"
+    },
+    "page_count": {
+      "minimum": 0,
+      "title": "Page Count",
+      "type": "integer"
+    },
+    "pages": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Page"
+      },
+      "title": "Pages",
+      "type": "array"
+    },
+    "processing": {
+      "$ref": "#/$defs/ProcessingInfo"
+    },
+    "sections": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Section"
+      },
+      "title": "Sections",
+      "type": "array"
+    },
+    "tables": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Table"
+      },
+      "title": "Tables",
+      "type": "array"
+    }
+  },
+  "required": [
+    "document_id",
+    "filename",
+    "content_sha256",
+    "page_count",
+    "processing"
+  ],
+  "title": "ProcessedDocument",
+  "type": "object"
+}
